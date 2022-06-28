@@ -10,7 +10,7 @@ datasource db {
 }
 
 model Account {
-    fediverseAccountId Int    @id
+    fediverseAccountId String @id
     nanoAddress        String
-    nanoPrivateKey     String
+    nanoIndex          Int
 }

@@ -1,19 +1,30 @@
 {
-  "name": "nanotip-fediverse",
-  "version": "1.0.0",
-  "main": "index.js",
-  "repository": "https://github.com/filipesmedeiros/nanotip-fediverse.git",
-  "author": "Filipe Medeiros <hello@filipesm.com>",
-  "license": "MIT",
-  "private": false,
-  "dependencies": {
-    "@prisma/client": "^3.13.0",
-    "crypto-js": "^4.1.1",
-    "nanocurrency": "^2.5.0",
-    "prisma": "^3.13.0",
-    "ws": "^8.5.0"
-  },
-  "devDependencies": {
-    "@types/ws": "^8.5.3"
-  }
+    "name": "nanotip-fediverse",
+    "version": "1.0.0",
+    "type": "module",
+    "main": "index.js",
+    "repository": "https://github.com/filipesmedeiros/nanotip-fediverse.git",
+    "author": "Filipe Medeiros <hello@filipesm.com>",
+    "license": "MIT",
+    "private": false,
+    "scripts": {
+        "dev": "tsx ./index.ts"
+    },
+    "dependencies": {
+        "@prisma/client": "^3.13.0",
+        "big.js": "^6.2.0",
+        "crypto-js": "^4.1.1",
+        "jsdom": "^20.0.0",
+        "nanocurrency": "^2.5.0",
+        "node-fetch": "^3.2.6",
+        "prisma": "^3.13.0",
+        "ws": "^8.5.0"
+    },
+    "devDependencies": {
+        "@types/big.js": "^6.1.4",
+        "@types/jsdom": "^16.2.14",
+        "@types/ws": "^8.5.3",
+        "dotenv": "^16.0.1",
+        "tsx": "^3.6.0"
+    }
 }
