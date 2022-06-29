@@ -19,3 +19,14 @@ export interface NanotoPowResponse {
   work: string
   credits: number
 }
+
+export interface AccountReceivableResponse {
+  blocks:
+    | {
+        [blockHash: string]: {
+          amount: string
+          source: string
+        }
+      }
+    | ''
+}

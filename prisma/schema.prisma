@@ -11,6 +11,6 @@ datasource db {
 
 model Account {
     fediverseAccountId String @id
-    nanoAddress        String
-    nanoIndex          Int
+    nanoAddress        String @unique
+    nanoIndex          Int    @unique
 }

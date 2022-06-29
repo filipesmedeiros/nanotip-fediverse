@@ -10,15 +10,21 @@ import {
   signBlock,
 } from 'nanocurrency'
 
+import { AccountsService } from '@app/accounts/accounts.service'
 import { Config } from '@app/lib/types'
 
-import { AccountInfoResponse, NanotoPowResponse } from './lib/nano.types'
+import {
+  AccountInfoResponse,
+  AccountReceivableResponse,
+  NanotoPowResponse,
+} from './lib/nano.types'
 
 @Injectable()
 export class NanoService {
   constructor(
     private configService: ConfigService<Config>,
-    private httpService: HttpService
+    private httpService: HttpService,
+    private accountsService: AccountsService
   ) {}
 
   getAddressAndPkFromIndex(index: number) {
@@ -47,6 +53,22 @@ export class NanoService {
     }
   }
 
+  async getNanoAccountReceivables(account: string) {
+    const accountRes =
+      await this.httpService.axiosRef.post<AccountReceivableResponse>('/', {
+        action: 'receivable',
+        account,
+        source: 'true',
+      })
+
+    const blocks = accountRes.data.blocks
+
+    if (accountRes.status >= 300 || blocks === '')
+      throw new Error(accountRes.statusText)
+
+    return blocks
+  }
+
   async sendNano({
     from,
     to,
@@ -58,6 +80,8 @@ export class NanoService {
     amount: string
     privateKey: string
   }) {
+    await this.receiveAllReceivables(from)
+
     Big.PE = 50
 
     const { frontier, balance } = await this.getNanoAccountInfo(from)
@@ -69,13 +93,15 @@ export class NanoService {
 
     const newBalance = Big(balance).minus(amount).toString()
 
-    const hash = hashBlock({
+    const hashData = {
       account: from,
       previous: frontier,
       representative: this.configService.get('NANO_REPRESENTATIVE'),
       balance: newBalance,
       link: to,
-    })
+    }
+
+    const hash = hashBlock(hashData)
 
     const signature = signBlock({ secretKey: privateKey, hash })
 
@@ -89,17 +115,100 @@ export class NanoService {
         subtype: 'send',
         block: {
           type: 'state',
-          account: from,
-          previous: frontier,
-          representative: this.configService.get('NANO_REPRESENTATIVE'),
-          balance: newBalance,
-          link: to,
+          ...hashData,
           signature,
           work,
         },
       }
     )
 
-    return processRes.data
+    return processRes.data.hash
+  }
+
+  private async receiveAllReceivables(account: string) {
+    const receivables = await this.getNanoAccountReceivables(account)
+
+    const results = await Promise.all([
+      this.getNanoAccountInfo(account),
+      this.accountsService.getAccount(account),
+    ])
+
+    let { frontier, balance } = results[0]
+    const { nanoIndex } = results[1]
+
+    const { privateKey } = this.getAddressAndPkFromIndex(nanoIndex)
+
+    for (const [sendHash, { amount }] of Object.entries(receivables)) {
+      const { hash, newBalance } = await this.receiveNano({
+        sendHash,
+        to: account,
+        amount,
+        cachedInfo: { frontier, balance },
+        privateKey,
+      })
+
+      frontier = hash
+      balance = newBalance
+    }
+  }
+
+  private async receiveNano({
+    sendHash,
+    to,
+    amount,
+    privateKey,
+    cachedInfo,
+  }: {
+    sendHash: string
+    to: string
+    amount: string
+    privateKey: string
+    cachedInfo?: {
+      balance: string
+      frontier: string
+    }
+  }) {
+    Big.PE = 50
+
+    const { frontier, balance } =
+      cachedInfo ?? (await this.getNanoAccountInfo(to))
+
+    const powRes = this.httpService.axiosRef.get<NanotoPowResponse>(
+      `https://nano.to/${frontier}/pow`,
+      { baseURL: undefined }
+    )
+
+    const newBalance = Big(balance).plus(amount).toString()
+
+    const hashData = {
+      account: to,
+      previous: frontier,
+      representative: this.configService.get('NANO_REPRESENTATIVE'),
+      balance: newBalance,
+      link: sendHash,
+    }
+
+    const hash = hashBlock(hashData)
+
+    const signature = signBlock({ secretKey: privateKey, hash })
+
+    const { work } = (await powRes).data
+
+    const processRes = await this.httpService.axiosRef.post<{ hash: string }>(
+      '/',
+      {
+        action: 'process',
+        json_block: 'true',
+        subtype: 'receive',
+        block: {
+          type: 'state',
+          ...hashData,
+          signature,
+          work,
+        },
+      }
+    )
+
+    return { hash: processRes.data.hash, newBalance }
   }
 }

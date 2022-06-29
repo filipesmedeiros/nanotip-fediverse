@@ -190,7 +190,7 @@ export class MastodonService implements OnModuleInit {
         tipperAccount.nanoIndex
       )
 
-      const { hash } = await this.nanoService.sendNano({
+      const hash = await this.nanoService.sendNano({
         amount: amountInRaw,
         from: tipperAccount.nanoAddress,
         to: tippedUserNanoAddress,

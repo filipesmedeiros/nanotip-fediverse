@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
+import { checkAddress } from 'nanocurrency'
 
 import { Config } from '@app/lib/types'
 import { NanoService } from '@app/nano/nano.service'
@@ -13,9 +14,12 @@ export class AccountsService {
     private nanoService: NanoService
   ) {}
 
-  getAccount(fediverseUserId: string) {
+  getAccount(fediverseUserIdOrNanoAddress: string) {
+    const where = checkAddress(fediverseUserIdOrNanoAddress)
+      ? { nanoAddress: fediverseUserIdOrNanoAddress }
+      : { fediverseAccountId: fediverseUserIdOrNanoAddress }
     return this.prismaService.account.findUnique({
-      where: { fediverseAccountId: fediverseUserId },
+      where,
     })
   }
 
