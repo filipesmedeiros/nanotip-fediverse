@@ -1,5 +1,11 @@
 import { HttpService } from '@nestjs/axios'
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleInit,
+  forwardRef,
+} from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import Big from 'big.js'
 import { JSDOM } from 'jsdom'
@@ -20,7 +26,9 @@ export class MastodonService implements OnModuleInit {
   constructor(
     private httpService: HttpService,
     private configService: ConfigService<Config>,
+    @Inject(forwardRef(() => NanoService))
     private nanoService: NanoService,
+    @Inject(forwardRef(() => AccountsService))
     private accountsService: AccountsService
   ) {
     this.mastodonStreamingBaseUrlWithToken = `${this.configService.get(

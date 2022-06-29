@@ -1,5 +1,5 @@
 import { HttpService } from '@nestjs/axios'
-import { Injectable } from '@nestjs/common'
+import { Inject, Injectable, forwardRef } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import Big from 'big.js'
 import {
@@ -24,6 +24,7 @@ export class NanoService {
   constructor(
     private configService: ConfigService<Config>,
     private httpService: HttpService,
+    @Inject(forwardRef(() => AccountsService))
     private accountsService: AccountsService
   ) {}
 

@@ -1,9 +1,10 @@
 import { HttpModule } from '@nestjs/axios'
-import { Module } from '@nestjs/common'
+import { Module, forwardRef } from '@nestjs/common'
 import { ConfigModule, ConfigService } from '@nestjs/config'
 
 import { AccountsModule } from '@app/accounts/accounts.module'
 import { Config } from '@app/lib/types'
+import { NanoModule } from '@app/nano/nano.module'
 
 import { MastodonService } from './mastodon.service'
 
@@ -11,7 +12,9 @@ import { MastodonService } from './mastodon.service'
   providers: [MastodonService],
   exports: [MastodonService],
   imports: [
-    AccountsModule,
+    forwardRef(() => AccountsModule),
+    forwardRef(() => NanoModule),
+    ConfigModule,
     HttpModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService<Config>) => ({

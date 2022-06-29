@@ -1,16 +1,14 @@
-import { Injectable } from '@nestjs/common'
-import { ConfigService } from '@nestjs/config'
+import { forwardRef, Inject, Injectable } from '@nestjs/common'
 import { checkAddress } from 'nanocurrency'
 
-import { Config } from '@app/lib/types'
 import { NanoService } from '@app/nano/nano.service'
 import { PrismaService } from '@app/prisma/prisma.service'
 
 @Injectable()
 export class AccountsService {
   constructor(
-    private configService: ConfigService<Config>,
     private prismaService: PrismaService,
+    @Inject(forwardRef(() => NanoService))
     private nanoService: NanoService
   ) {}
 
