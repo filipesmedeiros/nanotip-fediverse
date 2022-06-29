@@ -6,10 +6,10 @@ import { JSDOM } from 'jsdom'
 import { Unit, convert } from 'nanocurrency'
 import { MessageEvent, WebSocket } from 'ws'
 
+import { AccountsService } from '@app/accounts/accounts.service'
 import { Config } from '@app/lib/types'
 import { Account, Toot } from '@app/mastodon/lib/mastodon.types'
 import { NanoService } from '@app/nano/nano.service'
-import { PrismaService } from '@app/prisma/prisma.service'
 
 @Injectable()
 export class MastodonService implements OnModuleInit {
@@ -20,115 +20,208 @@ export class MastodonService implements OnModuleInit {
   constructor(
     private httpService: HttpService,
     private configService: ConfigService<Config>,
-    private prismaService: PrismaService,
-    private nanoService: NanoService
+    private nanoService: NanoService,
+    private accountsService: AccountsService
   ) {
     this.mastodonStreamingBaseUrlWithToken = `${this.configService.get(
       'MASTODON_STREAMING_BASE_URL'
     )}?access_token=${this.configService.get('MASTODON_ACCESS_TOKEN')}`
   }
 
+  private tootCreatedAccountAndTipped({
+    replyToTootId,
+    newNanoAccount,
+    blockHash,
+    tippedUserDisplayName,
+    amount,
+  }: {
+    replyToTootId: string
+    newNanoAccount: string
+    tippedUserDisplayName: string
+    blockHash: string
+    amount: number
+  }) {
+    this.toot(
+      `Created an account (https://nanolooker.com/account/${newNanoAccount}) for ${tippedUserDisplayName} and sent Ӿ${amount} to it! ⚡️ https://nanolooker.com/block/${blockHash}`,
+      replyToTootId
+    )
+  }
+
+  private tootTipped({
+    replyToTootId,
+    blockHash,
+    tippedUserDisplayName,
+    amount,
+  }: {
+    replyToTootId: string
+    tippedUserDisplayName: string
+    blockHash: string
+    amount: number
+  }) {
+    this.toot(
+      `Tipped ${tippedUserDisplayName} Ӿ${amount}! ⚡️ https://nanolooker.com/block/${blockHash}`,
+      replyToTootId
+    )
+  }
+
+  private tootNoBalance({
+    tipperHandle,
+    tipperFediverseAccountId,
+    replyToTootId,
+  }: {
+    tipperHandle: string
+    tipperFediverseAccountId: string
+    replyToTootId: string
+  }) {
+    this.logger.warn(
+      `Mastodon user ${tipperFediverseAccountId} doesn't have enough balance to tip requested amount`
+    )
+    this.toot(
+      `${tipperHandle}, you don't have enough balance in your account 🥲`,
+      replyToTootId
+    ) // TODO
+  }
+
+  private tootCreatedNewAccountForTipper({
+    tipperHandle,
+    tipperFediverseAccountId,
+    newNanoAccount,
+    replyToTootId,
+  }: {
+    tipperHandle: string
+    tipperFediverseAccountId: string
+    newNanoAccount: string
+    replyToTootId: string
+  }) {
+    this.logger.warn(
+      `Mastodon user ${tipperFediverseAccountId} had not created an account yet. Created account with nano address ${newNanoAccount}`
+    )
+    this.toot(
+      `${tipperHandle}, you hadn't created an account yet 🥺
+      Created a new account with address ${newNanoAccount} (https://nanolooker.com/account/${newNanoAccount})
+      Please send some nano to it and try again ⚡️`,
+      replyToTootId
+    )
+  }
+
+  private async getNanoAddressAndDisplayNameFromFediverseAccountId(
+    fediverseAccountId: string
+  ) {
+    const tippedUserFediverseAccount = await this.getMastodonAccount(
+      fediverseAccountId
+    )
+    const nanoAddress = tippedUserFediverseAccount.fields.find(({ name }) => {
+      const nameLower = name.toLocaleUpperCase()
+      return nameLower === 'XNO' || nameLower === 'NANO' || nameLower === 'Ӿ'
+    })?.value
+
+    return { nanoAddress, displayName: tippedUserFediverseAccount.display_name }
+  }
+
   private async onToot(toot: Toot) {
-    try {
-      const { amount, isCustodial } = this.parseToot(toot.content)
+    const {
+      amount,
+      isCustodial,
+      shouldSplitAmount,
+      userIdsToTip,
+      tippedUserFediverseAccountId,
+    } = this.parseToot(toot)
 
-      const amountInRaw = convert(amount.toString(), {
-        from: Unit.Nano,
-        to: Unit.raw,
+    const amountInRaw = convert(amount.toString(), {
+      from: Unit.Nano,
+      to: Unit.raw,
+    })
+
+    if (!isCustodial) return // TODO
+
+    let tipperAccount = await this.accountsService.getAccount(toot.account.id)
+
+    if (!tipperAccount) {
+      tipperAccount = await this.accountsService.createAccount(toot.account.id)
+      this.tootCreatedNewAccountForTipper({
+        tipperHandle: `@${toot.account.acct}`,
+        tipperFediverseAccountId: toot.account.id,
+        newNanoAccount: tipperAccount.nanoAddress,
+        replyToTootId: toot.id,
+      })
+    }
+
+    const { balance } = await this.nanoService.getNanoAccountInfo(
+      tipperAccount.nanoAddress
+    )
+
+    if (Big(amountInRaw).gt(balance))
+      this.tootNoBalance({
+        tipperHandle: `@${toot.account.acct}`,
+        replyToTootId: toot.id,
+        tipperFediverseAccountId: toot.account.id,
       })
 
-      if (!isCustodial) return // TODO
+    const shouldIgnoreReply = userIdsToTip.length > 0
 
-      const tipperAccount = await this.prismaService.account.findUnique({
-        where: { fediverseAccountId: toot.account.id },
-      })
-
-      if (!tipperAccount) {
-        this.logger.warn(
-          `Mastodon user ${toot.account.id} has not created an account yet`
+    if (shouldIgnoreReply) {
+      // TODO
+    } else {
+      const info =
+        await this.getNanoAddressAndDisplayNameFromFediverseAccountId(
+          tippedUserFediverseAccountId
         )
-        this.toot('You have not created an account yet 🥲', toot.id) // TODO
-      }
+      let tippedUserNanoAddress = info.nanoAddress
+      const tippedUserDisplayName = info.displayName
 
-      const { balance } = await this.nanoService.getNanoAccountInfo(
-        tipperAccount.nanoAddress
-      )
+      let createdAccountForTippedUser = false
 
-      if (Big(amountInRaw).gt(balance)) {
-        this.logger.warn(
-          `Mastodon user ${toot.account.id} doesn't have enough balance to tip requested amount`
+      if (!tippedUserNanoAddress) {
+        let tippedUserAccount = await this.accountsService.getAccount(
+          tippedUserFediverseAccountId
         )
-        this.toot("You don't have enough balance in your account 🥲", toot.id) // TODO
-      }
 
-      const replyToAccountId = toot.in_reply_to_account_id
-      const isReply = !!replyToAccountId
-
-      if (isReply) {
-        const repliantMastodonAccount = await this.getMastodonAccount(
-          replyToAccountId
-        )
-        const sendToAddress = repliantMastodonAccount.fields.find(
-          ({ name }) => {
-            const nameLower = name.toLocaleUpperCase()
-            return (
-              nameLower === 'XNO' || nameLower === 'NANO' || nameLower === 'Ӿ'
-            )
-          }
-        )?.value
-
-        if (!sendToAddress) {
-          let repliantAccount = await this.prismaService.account.findUnique({
-            where: { fediverseAccountId: replyToAccountId },
-          })
-
-          if (!repliantAccount) {
-            const index =
-              (
-                await this.prismaService.account.findFirst({
-                  orderBy: { nanoIndex: 'desc' },
-                })
-              )?.nanoIndex ?? 0
-            const { address } = this.nanoService.getAddressAndPkFromIndex(index)
-            repliantAccount = await this.prismaService.account.create({
-              data: {
-                fediverseAccountId: replyToAccountId,
-                nanoIndex: index,
-                nanoAddress: address,
-              },
-            })
-          }
-
-          const { privateKey } = this.nanoService.getAddressAndPkFromIndex(
-            repliantAccount.nanoIndex
-          )
-
-          const hash = await this.nanoService.sendNano({
-            amount: amountInRaw,
-            from: tipperAccount.nanoAddress,
-            to: repliantAccount.nanoAddress,
-            privateKey,
-          })
-
-          this.toot(
-            `<p>Created an <a href="https://nanolooker.com/account/${repliantAccount.nanoAddress}">account</a> for ${repliantMastodonAccount.display_name}</p>
-                    <p>and <a href="https://nanolooker.com/block/${hash}">sent</a> Ӿ${amount} to it! ⚡️</p>`,
-            toot.id
+        if (!tippedUserAccount) {
+          createdAccountForTippedUser = true
+          tippedUserAccount = await this.accountsService.createAccount(
+            tippedUserFediverseAccountId
           )
         }
-      } else {
+
+        tippedUserNanoAddress = tippedUserAccount.nanoAddress
       }
-    } catch (e) {
-      this.logger.error(e)
-      return
+
+      const { privateKey } = this.nanoService.getAddressAndPkFromIndex(
+        tipperAccount.nanoIndex
+      )
+
+      const { hash } = await this.nanoService.sendNano({
+        amount: amountInRaw,
+        from: tipperAccount.nanoAddress,
+        to: tippedUserNanoAddress,
+        privateKey,
+      })
+
+      const tootParams = {
+        blockHash: hash,
+        amount,
+        replyToTootId: toot.id,
+        tippedUserDisplayName: tippedUserDisplayName,
+      }
+
+      if (createdAccountForTippedUser)
+        this.tootCreatedAccountAndTipped({
+          ...tootParams,
+          newNanoAccount: tippedUserNanoAddress,
+        })
+      else this.tootTipped(tootParams)
     }
   }
 
   onModuleInit() {
-    this.listenToToots(this.onToot)
+    this.listenToToots(toot => {
+      try {
+        this.onToot(toot)
+      } catch {} // TODO
+    })
   }
 
-  async toot(status: string, inReplyTo?: string) {
+  private async toot(status: string, inReplyTo?: string) {
     const tootRes = await this.httpService.axiosRef.post<Toot>('/statuses', {
       status,
       in_reply_to_id: inReplyTo,
@@ -139,8 +232,8 @@ export class MastodonService implements OnModuleInit {
     return tootRes.data
   }
 
-  parseToot(rawContent: string) {
-    const content = new JSDOM(rawContent)
+  private parseToot(toot: Toot) {
+    const content = new JSDOM(toot.content)
     const firstLine = content.window.document.querySelector('p')
     const textContent = firstLine?.textContent
 
@@ -152,11 +245,20 @@ export class MastodonService implements OnModuleInit {
     if (!amount) throw new Error('Toot is badly formatted')
 
     const isCustodial = !parts.includes('non-custodial')
+    const shouldSplitAmount = !parts.includes('split')
+    const tippedUserFediverseAccountId = toot.in_reply_to_account_id
+    const userIdsToTip = toot.mentions.map(({ id }) => id)
 
-    return { amount: +amount, isCustodial }
+    return {
+      amount: +amount,
+      isCustodial,
+      userIdsToTip,
+      shouldSplitAmount,
+      tippedUserFediverseAccountId,
+    }
   }
 
-  async getMastodonAccount(id: string) {
+  private async getMastodonAccount(id: string) {
     const accountRes = await this.httpService.axiosRef.get<Account>(
       `/accounts/${id}`
     )
@@ -166,7 +268,7 @@ export class MastodonService implements OnModuleInit {
     return accountRes.data
   }
 
-  listenToToots(onToot: (toot: Toot) => void, tag?: string) {
+  private listenToToots(onToot: (toot: Toot) => void, tag?: string) {
     const wsUrl = tag
       ? `${
           this.mastodonStreamingBaseUrlWithToken

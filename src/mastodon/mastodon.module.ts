@@ -2,8 +2,8 @@ import { HttpModule } from '@nestjs/axios'
 import { Module } from '@nestjs/common'
 import { ConfigModule, ConfigService } from '@nestjs/config'
 
+import { AccountsModule } from '@app/accounts/accounts.module'
 import { Config } from '@app/lib/types'
-import { PrismaModule } from '@app/prisma/prisma.module'
 
 import { MastodonService } from './mastodon.service'
 
@@ -11,6 +11,7 @@ import { MastodonService } from './mastodon.service'
   providers: [MastodonService],
   exports: [MastodonService],
   imports: [
+    AccountsModule,
     HttpModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService<Config>) => ({
@@ -21,7 +22,6 @@ import { MastodonService } from './mastodon.service'
       }),
       inject: [ConfigService],
     }),
-    PrismaModule,
   ],
 })
 export class MastodonModule {}
