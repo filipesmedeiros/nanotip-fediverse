@@ -90,6 +90,26 @@ export class MastodonService implements OnModuleInit {
     ) // TODO
   }
 
+  private tootNanoAccountNotOpened({
+    tipperHandle,
+    tipperFediverseAccountId,
+    nanoAccount,
+    replyToTootId,
+  }: {
+    tipperHandle: string
+    tipperFediverseAccountId: string
+    nanoAccount: string
+    replyToTootId: string
+  }) {
+    this.logger.warn(
+      `Mastodon user ${tipperFediverseAccountId} has not sent any fund to their account and are trying to tip`
+    )
+    this.toot(
+      `${tipperHandle}, you haven't sent any nano to your account ${nanoAccount} (https://nanolooker.com/account/${nanoAccount}) 🧐\n\nPlease send some nano to it and try again ⚡️`,
+      replyToTootId
+    ) // TODO
+  }
+
   private tootCreatedNewAccountForTipper({
     tipperHandle,
     tipperFediverseAccountId,
@@ -105,11 +125,14 @@ export class MastodonService implements OnModuleInit {
       `Mastodon user ${tipperFediverseAccountId} had not created an account yet. Created account with nano address ${newNanoAccount}`
     )
     this.toot(
-      `${tipperHandle}, you hadn't created an account yet 🥺
-      Created a new account with address ${newNanoAccount} (https://nanolooker.com/account/${newNanoAccount})
-      Please send some nano to it and try again ⚡️`,
+      `${tipperHandle}, you hadn't created an account yet 🥺\n\nI created a new account with address ${newNanoAccount} (https://nanolooker.com/account/${newNanoAccount}) 🥳\n\nPlease send some nano to it and try again ⚡️`,
       replyToTootId
     )
+  }
+
+  private tootTootIsBadlyFormatted(replyToTootId: string) {
+    this.logger.warn(`Toot ${replyToTootId} is badly formatted`)
+    this.toot(`Toot ${replyToTootId} is badly formatted 😫`, replyToTootId)
   }
 
   private async getNanoAddressAndDisplayNameFromFediverseAccountId(
@@ -127,13 +150,26 @@ export class MastodonService implements OnModuleInit {
   }
 
   private async onToot(toot: Toot) {
-    const {
-      amount,
-      isCustodial,
-      shouldSplitAmount,
-      userIdsToTip,
-      tippedUserFediverseAccountId,
-    } = this.parseToot(toot)
+    this.logger.log(`Saw a toot with id ${toot.id}`)
+
+    let amount: number,
+      isCustodial: boolean,
+      shouldSplitAmount: boolean,
+      userIdsToTip: string[],
+      tippedUserFediverseAccountId: string
+
+    try {
+      ;({
+        amount,
+        isCustodial,
+        shouldSplitAmount,
+        userIdsToTip,
+        tippedUserFediverseAccountId,
+      } = this.parseToot(toot))
+    } catch {
+      this.tootTootIsBadlyFormatted(toot.id)
+      return
+    }
 
     const amountInRaw = convert(amount.toString(), {
       from: Unit.Nano,
@@ -154,9 +190,32 @@ export class MastodonService implements OnModuleInit {
       })
     }
 
-    const { balance } = await this.nanoService.getNanoAccountInfo(
-      tipperAccount.nanoAddress
-    )
+    let balance: string
+    try {
+      ;({ balance } = await this.nanoService.getNanoAccountInfo(
+        tipperAccount.nanoAddress
+      ))
+    } catch {
+      const receivables = await this.nanoService.getNanoAccountReceivables(
+        tipperAccount.nanoAddress
+      )
+      const hasReceivables = Object.entries(receivables).length > 0
+      if (!hasReceivables)
+        this.tootNanoAccountNotOpened({
+          tipperHandle: `@${toot.account.acct}`,
+          tipperFediverseAccountId: toot.account.id,
+          replyToTootId: toot.id,
+          nanoAccount: tipperAccount.nanoAddress,
+        })
+      else {
+        Big.PE = 50
+        balance = Object.entries(receivables)
+          .reduce((acc, nextReceivable) => {
+            return Big(acc).plus(nextReceivable[1].amount)
+          }, Big(0))
+          .toString()
+      }
+    }
 
     if (Big(amountInRaw).gt(balance))
       this.tootNoBalance({
@@ -280,7 +339,7 @@ export class MastodonService implements OnModuleInit {
     const wsUrl = tag
       ? `${
           this.mastodonStreamingBaseUrlWithToken
-        }&stream=hashtag&tag=${this.configService.get(
+        }&stream=hashtag:local&tag=${this.configService.get(
           'MASTODON_TRIGGER_HASHTAG'
         )}`
       : `${this.mastodonStreamingBaseUrlWithToken}&stream=public`

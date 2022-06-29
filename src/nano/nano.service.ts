@@ -21,6 +21,9 @@ import {
 
 @Injectable()
 export class NanoService {
+  static zeroString =
+    '0000000000000000000000000000000000000000000000000000000000000000'
+
   constructor(
     private configService: ConfigService<Config>,
     private httpService: HttpService,
@@ -48,9 +51,12 @@ export class NanoService {
 
     if (accountRes.status >= 300) throw new Error(accountRes.statusText)
 
+    const data = accountRes.data
+    if ('error' in data) return undefined
+
     return {
-      balance: accountRes.data.confirmed_balance,
-      frontier: accountRes.data.confirmed_frontier,
+      balance: data.confirmed_balance,
+      frontier: data.confirmed_frontier,
     }
   }
 
@@ -64,10 +70,15 @@ export class NanoService {
 
     const blocks = accountRes.data.blocks
 
-    if (accountRes.status >= 300 || blocks === '')
-      throw new Error(accountRes.statusText)
+    if (accountRes.status >= 300) throw new Error(accountRes.statusText)
 
-    return blocks
+    return blocks === '' ? {} : blocks
+  }
+
+  async accountHasReceivables(account: string) {
+    const receivables = await this.getNanoAccountReceivables(account)
+
+    return Object.entries(receivables).length !== 0
   }
 
   async sendNano({
@@ -87,10 +98,7 @@ export class NanoService {
 
     const { frontier, balance } = await this.getNanoAccountInfo(from)
 
-    const powRes = this.httpService.axiosRef.get<NanotoPowResponse>(
-      `https://nano.to/${frontier}/pow`,
-      { baseURL: undefined }
-    )
+    const work = await this.getWorkForHash(frontier)
 
     const newBalance = Big(balance).minus(amount).toString()
 
@@ -105,8 +113,6 @@ export class NanoService {
     const hash = hashBlock(hashData)
 
     const signature = signBlock({ secretKey: privateKey, hash })
-
-    const { work } = (await powRes).data
 
     const processRes = await this.httpService.axiosRef.post<{ hash: string }>(
       '/',
@@ -134,7 +140,10 @@ export class NanoService {
       this.accountsService.getAccount(account),
     ])
 
-    let { frontier, balance } = results[0]
+    let { frontier, balance } = results[0] ?? {
+      frontier: NanoService.zeroString,
+      balance: '0',
+    }
     const { nanoIndex } = results[1]
 
     const { privateKey } = this.getAddressAndPkFromIndex(nanoIndex)
@@ -174,10 +183,11 @@ export class NanoService {
     const { frontier, balance } =
       cachedInfo ?? (await this.getNanoAccountInfo(to))
 
-    const powRes = this.httpService.axiosRef.get<NanotoPowResponse>(
-      `https://nano.to/${frontier}/pow`,
-      { baseURL: undefined }
-    )
+    const workFor =
+      frontier === NanoService.zeroString
+        ? derivePublicKey(privateKey)
+        : frontier
+    const work = await this.getWorkForHash(workFor)
 
     const newBalance = Big(balance).plus(amount).toString()
 
@@ -192,8 +202,6 @@ export class NanoService {
     const hash = hashBlock(hashData)
 
     const signature = signBlock({ secretKey: privateKey, hash })
-
-    const { work } = (await powRes).data
 
     const processRes = await this.httpService.axiosRef.post<{ hash: string }>(
       '/',
@@ -211,5 +219,16 @@ export class NanoService {
     )
 
     return { hash: processRes.data.hash, newBalance }
+  }
+
+  private async getWorkForHash(hash: string) {
+    const {
+      data: { work },
+    } = await this.httpService.axiosRef.get<NanotoPowResponse>(
+      `https://nano.to/${hash}/pow`,
+      { baseURL: undefined }
+    )
+
+    return work
   }
 }
