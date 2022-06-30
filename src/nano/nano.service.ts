@@ -52,12 +52,18 @@ export class NanoService {
     return { address, privateKey }
   }
 
-  async getNanoAccountInfo(account: string) {
+  async getNanoAccountInfo({
+    account,
+    getUnconfirmedInfo,
+  }: {
+    account: string
+    getUnconfirmedInfo?: boolean
+  }) {
     const accountRes =
       await this.httpService.axiosRef.post<AccountInfoResponse>('/', {
         action: 'account_info',
         account,
-        include_confirmed: 'true',
+        ...(getUnconfirmedInfo ? {} : { include_confirmed: 'true' }),
       })
 
     if (accountRes.status >= 300) throw new Error(accountRes.statusText)
@@ -66,8 +72,8 @@ export class NanoService {
     if ('error' in data) return undefined
 
     return {
-      balance: data.confirmed_balance,
-      frontier: data.confirmed_frontier,
+      balance: getUnconfirmedInfo ? data.balance : data.confirmed_balance,
+      frontier: getUnconfirmedInfo ? data.frontier : data.confirmed_frontier,
     }
   }
 
@@ -97,17 +103,22 @@ export class NanoService {
     to,
     amount,
     privateKey,
+    useUnconfirmedInfo,
   }: {
     from: string
     to: string
     amount: string
     privateKey: string
+    useUnconfirmedInfo?: boolean
   }) {
     await this.receiveAllReceivables(from)
 
     Big.PE = 50
 
-    const { frontier, balance } = await this.getNanoAccountInfo(from)
+    const { frontier, balance } = await this.getNanoAccountInfo({
+      account: from,
+      getUnconfirmedInfo: useUnconfirmedInfo,
+    })
 
     const work = await this.getWorkForHash(frontier)
 
@@ -147,7 +158,7 @@ export class NanoService {
     const receivables = await this.getNanoAccountReceivables(account)
 
     const results = await Promise.all([
-      this.getNanoAccountInfo(account),
+      this.getNanoAccountInfo({ account }),
       this.accountsService.getAccount(account),
     ])
 
@@ -192,7 +203,7 @@ export class NanoService {
     Big.PE = 50
 
     const { frontier, balance } =
-      cachedInfo ?? (await this.getNanoAccountInfo(to))
+      cachedInfo ?? (await this.getNanoAccountInfo({ account: to }))
 
     const workFor =
       frontier === NanoService.zeroString

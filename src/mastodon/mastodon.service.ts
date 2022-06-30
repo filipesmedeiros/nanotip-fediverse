@@ -239,8 +239,18 @@ export class MastodonService implements OnModuleInit {
       const tipAmountToEachTippedUserInraw = this.nanoService.nanoToRaw(
         tipAmountToEachTippedUserInNano
       )
+
+      for (const userId of userIdsToTip)
+        this.tipUser({
+          tippedUserFediverseAccountId: userId,
+          amountInRaw: tipAmountToEachTippedUserInraw,
+          amountInNano: tipAmountToEachTippedUserInNano,
+          replyToTootId: toot.id,
+          tipperNanoIndex: tipperAccount.nanoIndex,
+          fastSends: true,
+        })
     } else
-      this.tipUser({
+      await this.tipUser({
         tippedUserFediverseAccountId: replyToFediverseAccountId,
         amountInRaw,
         amountInNano: amount,
@@ -255,12 +265,14 @@ export class MastodonService implements OnModuleInit {
     tippedUserFediverseAccountId,
     tipperNanoIndex,
     replyToTootId,
+    fastSends,
   }: {
     amountInRaw: string
     amountInNano: number
     tippedUserFediverseAccountId: string
     tipperNanoIndex: number
     replyToTootId: string
+    fastSends?: boolean
   }) {
     const info = await this.getNanoAddressAndDisplayNameFromFediverseAccountId(
       tippedUserFediverseAccountId
@@ -293,6 +305,7 @@ export class MastodonService implements OnModuleInit {
       from: tipperNanoAddress,
       to: tippedUserNanoAddress,
       privateKey: tipperNanoPrivateKey,
+      usedUnconfirmedPrevious: fastSends,
     })
 
     const tootParams = {
