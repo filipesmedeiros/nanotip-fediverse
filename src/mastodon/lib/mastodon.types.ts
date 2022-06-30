@@ -47,7 +47,12 @@ export interface Toot {
     }[]
   }
   media_attachments: []
-  mentions: []
+  mentions: {
+    id: string
+    username: string
+    url: string
+    acct: string
+  }[]
   tags: {
     name: string
     url: string

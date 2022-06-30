@@ -3,6 +3,8 @@ import { Inject, Injectable, forwardRef } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import Big from 'big.js'
 import {
+  Unit,
+  convert,
   deriveAddress,
   derivePublicKey,
   deriveSecretKey,
@@ -30,6 +32,15 @@ export class NanoService {
     @Inject(forwardRef(() => AccountsService))
     private accountsService: AccountsService
   ) {}
+
+  nanoToRaw(nano: number) {
+    const amountInRaw = convert(nano.toString(), {
+      from: Unit.Nano,
+      to: Unit.raw,
+    })
+
+    return amountInRaw
+  }
 
   getAddressAndPkFromIndex(index: number) {
     const seed = this.configService.get('NANO_SEED')

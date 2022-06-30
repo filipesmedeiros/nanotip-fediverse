@@ -1,4 +1,4 @@
-import { forwardRef, Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable, forwardRef } from '@nestjs/common'
 import { checkAddress } from 'nanocurrency'
 
 import { NanoService } from '@app/nano/nano.service'
@@ -27,12 +27,13 @@ export class AccountsService {
         await this.prismaService.account.findFirst({
           orderBy: { nanoIndex: 'desc' },
         })
-      )?.nanoIndex ?? 0
-    const { address } = this.nanoService.getAddressAndPkFromIndex(index)
+      )?.nanoIndex ?? -1
+    const newIndex = index + 1
+    const { address } = this.nanoService.getAddressAndPkFromIndex(newIndex)
     return this.prismaService.account.create({
       data: {
         fediverseAccountId: fediverseUserId,
-        nanoIndex: index,
+        nanoIndex: newIndex,
         nanoAddress: address,
       },
     })
