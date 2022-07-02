@@ -199,9 +199,9 @@ export class MastodonService implements OnModuleInit {
 
     let balance: string
     try {
-      ;({ balance } = await this.nanoService.getNanoAccountInfo(
-        tipperAccount.nanoAddress
-      ))
+      ;({ balance } = await this.nanoService.getNanoAccountInfo({
+        account: tipperAccount.nanoAddress,
+      }))
     } catch {
       const receivables = await this.nanoService.getNanoAccountReceivables(
         tipperAccount.nanoAddress
@@ -305,7 +305,7 @@ export class MastodonService implements OnModuleInit {
       from: tipperNanoAddress,
       to: tippedUserNanoAddress,
       privateKey: tipperNanoPrivateKey,
-      usedUnconfirmedPrevious: fastSends,
+      useUnconfirmedInfo: fastSends,
     })
 
     const tootParams = {
