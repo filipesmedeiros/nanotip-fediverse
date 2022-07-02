@@ -1,5 +1,5 @@
 import { HttpService } from '@nestjs/axios'
-import { Inject, Injectable, forwardRef } from '@nestjs/common'
+import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import Big from 'big.js'
 import {
@@ -26,6 +26,8 @@ export class NanoService {
   static zeroString =
     '0000000000000000000000000000000000000000000000000000000000000000'
 
+  private readonly logger = new Logger(NanoService.name)
+
   constructor(
     private configService: ConfigService<Config>,
     private httpService: HttpService,
@@ -40,6 +42,15 @@ export class NanoService {
     })
 
     return amountInRaw
+  }
+
+  rawToNano(raw: string) {
+    const amountInNano = convert(raw, {
+      from: Unit.raw,
+      to: Unit.Nano,
+    })
+
+    return +amountInNano
   }
 
   getAddressAndPkFromIndex(index: number) {
@@ -120,9 +131,13 @@ export class NanoService {
       getUnconfirmedInfo: useUnconfirmedInfo,
     })
 
+    this.logger.log(`Balance: ${balance}`)
+
     const work = await this.getWorkForHash(frontier)
 
     const newBalance = Big(balance).minus(amount).toString()
+
+    this.logger.log(`Balance: ${newBalance}`)
 
     const hashData = {
       account: from,
@@ -136,20 +151,21 @@ export class NanoService {
 
     const signature = signBlock({ secretKey: privateKey, hash })
 
-    const processRes = await this.httpService.axiosRef.post<{ hash: string }>(
-      '/',
-      {
-        action: 'process',
-        json_block: 'true',
-        subtype: 'send',
-        block: {
-          type: 'state',
-          ...hashData,
-          signature,
-          work,
-        },
-      }
-    )
+    const processRes = await this.httpService.axiosRef.post<
+      { hash: string } | { error: string }
+    >('/', {
+      action: 'process',
+      json_block: 'true',
+      subtype: 'send',
+      block: {
+        type: 'state',
+        ...hashData,
+        signature,
+        work,
+      },
+    })
+
+    if ('error' in processRes.data) throw new Error(processRes.data.error)
 
     return processRes.data.hash
   }
@@ -211,7 +227,11 @@ export class NanoService {
         : frontier
     const work = await this.getWorkForHash(workFor)
 
+    this.logger.log(`Balance: ${balance}`)
+
     const newBalance = Big(balance).plus(amount).toString()
+
+    this.logger.log(`Balance: ${newBalance}`)
 
     const hashData = {
       account: to,
@@ -225,20 +245,21 @@ export class NanoService {
 
     const signature = signBlock({ secretKey: privateKey, hash })
 
-    const processRes = await this.httpService.axiosRef.post<{ hash: string }>(
-      '/',
-      {
-        action: 'process',
-        json_block: 'true',
-        subtype: 'receive',
-        block: {
-          type: 'state',
-          ...hashData,
-          signature,
-          work,
-        },
-      }
-    )
+    const processRes = await this.httpService.axiosRef.post<
+      { hash: string } | { error: string }
+    >('/', {
+      action: 'process',
+      json_block: 'true',
+      subtype: 'receive',
+      block: {
+        type: 'state',
+        ...hashData,
+        signature,
+        work,
+      },
+    })
+
+    if ('error' in processRes.data) throw new Error(processRes.data.error)
 
     return { hash: processRes.data.hash, newBalance }
   }

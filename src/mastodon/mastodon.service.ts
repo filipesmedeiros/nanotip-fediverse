@@ -9,7 +9,6 @@ import {
 import { ConfigService } from '@nestjs/config'
 import Big from 'big.js'
 import { JSDOM } from 'jsdom'
-import { Unit, convert } from 'nanocurrency'
 import { MessageEvent, WebSocket } from 'ws'
 
 import { AccountsService } from '@app/accounts/accounts.service'
@@ -48,17 +47,17 @@ export class MastodonService implements OnModuleInit {
     replyToTootId,
     newNanoAccount,
     blockHash,
-    tippedUserDisplayName,
+    tippedUserHandle,
     amount,
   }: {
     replyToTootId: string
     newNanoAccount: string
-    tippedUserDisplayName: string
+    tippedUserHandle: string
     blockHash: string
     amount: number
   }) {
     this.toot(
-      `Created an account (https://nanolooker.com/account/${newNanoAccount}) for ${tippedUserDisplayName} and sent Ӿ${amount} to it! ⚡️ https://nanolooker.com/block/${blockHash}`,
+      `Created an account (https://nanolooker.com/account/${newNanoAccount}) for ${tippedUserHandle} and sent Ӿ${amount} to it! ⚡️ https://nanolooker.com/block/${blockHash}`,
       replyToTootId
     )
   }
@@ -66,31 +65,31 @@ export class MastodonService implements OnModuleInit {
   private tootTipped({
     replyToTootId,
     blockHash,
-    tippedUserDisplayName,
+    tippedUserHandle,
     amount,
   }: {
     replyToTootId: string
-    tippedUserDisplayName: string
+    tippedUserHandle: string
     blockHash: string
     amount: number
   }) {
     this.toot(
-      `Tipped ${tippedUserDisplayName} Ӿ${amount}! ⚡️ https://nanolooker.com/block/${blockHash}`,
+      `Tipped ${tippedUserHandle} Ӿ${amount}! ⚡️\n\nhttps://nanolooker.com/block/${blockHash}`,
       replyToTootId
     )
   }
 
   private tootNoBalance({
     tipperHandle,
-    tipperFediverseAccountId,
+    tipperAccountId,
     replyToTootId,
   }: {
     tipperHandle: string
-    tipperFediverseAccountId: string
+    tipperAccountId: string
     replyToTootId: string
   }) {
     this.logger.warn(
-      `Mastodon user ${tipperFediverseAccountId} doesn't have enough balance to tip requested amount`
+      `Mastodon user ${tipperAccountId} doesn't have enough balance to tip requested amount`
     )
     this.toot(
       `${tipperHandle}, you don't have enough balance in your account 🥲`,
@@ -100,17 +99,17 @@ export class MastodonService implements OnModuleInit {
 
   private tootNanoAccountNotOpened({
     tipperHandle,
-    tipperFediverseAccountId,
+    tipperAccountId,
     nanoAccount,
     replyToTootId,
   }: {
     tipperHandle: string
-    tipperFediverseAccountId: string
+    tipperAccountId: string
     nanoAccount: string
     replyToTootId: string
   }) {
     this.logger.warn(
-      `Mastodon user ${tipperFediverseAccountId} has not sent any fund to their account and are trying to tip`
+      `Mastodon user ${tipperAccountId} has not sent any fund to their account and are trying to tip`
     )
     this.toot(
       `${tipperHandle}, you haven't sent any nano to your account ${nanoAccount} (https://nanolooker.com/account/${nanoAccount}) 🧐\n\nPlease send some nano to it and try again ⚡️`,
@@ -120,17 +119,17 @@ export class MastodonService implements OnModuleInit {
 
   private tootCreatedNewAccountForTipper({
     tipperHandle,
-    tipperFediverseAccountId,
+    tipperAccountId,
     newNanoAccount,
     replyToTootId,
   }: {
     tipperHandle: string
-    tipperFediverseAccountId: string
+    tipperAccountId: string
     newNanoAccount: string
     replyToTootId: string
   }) {
     this.logger.warn(
-      `Mastodon user ${tipperFediverseAccountId} had not created an account yet. Created account with nano address ${newNanoAccount}`
+      `Mastodon user ${tipperAccountId} had not created an account yet. Created account with nano address ${newNanoAccount}`
     )
     this.toot(
       `${tipperHandle}, you hadn't created an account yet 🥺\n\nI created a new account with address ${newNanoAccount} (https://nanolooker.com/account/${newNanoAccount}) 🥳\n\nPlease send some nano to it and try again ⚡️`,
@@ -140,21 +139,17 @@ export class MastodonService implements OnModuleInit {
 
   private tootTootIsBadlyFormatted(replyToTootId: string) {
     this.logger.warn(`That toot is badly formatted`)
-    this.toot(`Toot ${replyToTootId} is badly formatted 😫`, replyToTootId)
+    this.toot(`That toot is badly formatted 😫`, replyToTootId) // TODO point to docs
   }
 
-  private async getNanoAddressAndDisplayNameFromFediverseAccountId(
-    fediverseAccountId: string
-  ) {
-    const tippedUserFediverseAccount = await this.getMastodonAccount(
-      fediverseAccountId
-    )
-    const nanoAddress = tippedUserFediverseAccount.fields.find(({ name }) => {
+  private async getNanoAddressAndHandleFromAccountId(accountId: string) {
+    const tippedUserAccount = await this.getMastodonAccount(accountId)
+    const nanoAddress = tippedUserAccount.fields.find(({ name }) => {
       const nameLower = name.toLocaleUpperCase()
       return nameLower === 'XNO' || nameLower === 'NANO' || nameLower === 'Ӿ'
     })?.value
 
-    return { nanoAddress, displayName: tippedUserFediverseAccount.display_name }
+    return { nanoAddress, handle: `@${tippedUserAccount.acct}` }
   }
 
   private async onToot(toot: Toot) {
@@ -164,7 +159,7 @@ export class MastodonService implements OnModuleInit {
       isCustodial: boolean,
       shouldSplitAmount: boolean,
       userIdsToTip: string[],
-      replyToFediverseAccountId: string,
+      replyToAccountId: string,
       shouldIgnoreReply: boolean
 
     try {
@@ -173,7 +168,7 @@ export class MastodonService implements OnModuleInit {
         isCustodial,
         shouldSplitAmount,
         userIdsToTip,
-        replyToFediverseAccountId,
+        replyToAccountId,
         shouldIgnoreReply,
       } = this.parseToot(toot))
     } catch {
@@ -191,7 +186,7 @@ export class MastodonService implements OnModuleInit {
       tipperAccount = await this.accountsService.createAccount(toot.account.id)
       this.tootCreatedNewAccountForTipper({
         tipperHandle: `@${toot.account.acct}`,
-        tipperFediverseAccountId: toot.account.id,
+        tipperAccountId: toot.account.id,
         newNanoAccount: tipperAccount.nanoAddress,
         replyToTootId: toot.id,
       })
@@ -210,7 +205,7 @@ export class MastodonService implements OnModuleInit {
       if (!hasReceivables)
         this.tootNanoAccountNotOpened({
           tipperHandle: `@${toot.account.acct}`,
-          tipperFediverseAccountId: toot.account.id,
+          tipperAccountId: toot.account.id,
           replyToTootId: toot.id,
           nanoAccount: tipperAccount.nanoAddress,
         })
@@ -228,30 +223,34 @@ export class MastodonService implements OnModuleInit {
       this.tootNoBalance({
         tipperHandle: `@${toot.account.acct}`,
         replyToTootId: toot.id,
-        tipperFediverseAccountId: toot.account.id,
+        tipperAccountId: toot.account.id,
       })
 
     if (shouldIgnoreReply) {
       const tippedUsersCount = userIdsToTip.length
-      const tipAmountToEachTippedUserInNano = shouldSplitAmount
-        ? Math.round(amount / tippedUsersCount)
-        : amount
-      const tipAmountToEachTippedUserInraw = this.nanoService.nanoToRaw(
-        tipAmountToEachTippedUserInNano
-      )
+
+      this.logger.log({ amountInRaw })
+
+      const tipAmountToEachTippedUserInRaw = shouldSplitAmount
+        ? Big(amountInRaw).div(tippedUsersCount).round().toString()
+        : amountInRaw
+
+      this.logger.log({ tipAmountToEachTippedUserInRaw })
 
       for (const userId of userIdsToTip)
-        this.tipUser({
-          tippedUserFediverseAccountId: userId,
-          amountInRaw: tipAmountToEachTippedUserInraw,
-          amountInNano: tipAmountToEachTippedUserInNano,
+        await this.tipUser({
+          tippedUserAccountId: userId,
+          amountInRaw: tipAmountToEachTippedUserInRaw,
+          amountInNano: this.nanoService.rawToNano(
+            tipAmountToEachTippedUserInRaw
+          ),
           replyToTootId: toot.id,
           tipperNanoIndex: tipperAccount.nanoIndex,
           fastSends: true,
         })
     } else
       await this.tipUser({
-        tippedUserFediverseAccountId: replyToFediverseAccountId,
+        tippedUserAccountId: replyToAccountId,
         amountInRaw,
         amountInNano: amount,
         replyToTootId: toot.id,
@@ -262,35 +261,35 @@ export class MastodonService implements OnModuleInit {
   private async tipUser({
     amountInRaw,
     amountInNano,
-    tippedUserFediverseAccountId,
+    tippedUserAccountId,
     tipperNanoIndex,
     replyToTootId,
     fastSends,
   }: {
     amountInRaw: string
     amountInNano: number
-    tippedUserFediverseAccountId: string
+    tippedUserAccountId: string
     tipperNanoIndex: number
     replyToTootId: string
     fastSends?: boolean
   }) {
-    const info = await this.getNanoAddressAndDisplayNameFromFediverseAccountId(
-      tippedUserFediverseAccountId
+    const info = await this.getNanoAddressAndHandleFromAccountId(
+      tippedUserAccountId
     )
     let tippedUserNanoAddress = info.nanoAddress
-    const tippedUserDisplayName = info.displayName
+    const tippedUserHandle = info.handle
 
     let createdAccountForTippedUser = false
 
     if (!tippedUserNanoAddress) {
       let tippedUserAccount = await this.accountsService.getAccount(
-        tippedUserFediverseAccountId
+        tippedUserAccountId
       )
 
       if (!tippedUserAccount) {
         createdAccountForTippedUser = true
         tippedUserAccount = await this.accountsService.createAccount(
-          tippedUserFediverseAccountId
+          tippedUserAccountId
         )
       }
 
@@ -312,7 +311,7 @@ export class MastodonService implements OnModuleInit {
       blockHash: hash,
       amount: amountInNano,
       replyToTootId,
-      tippedUserDisplayName: tippedUserDisplayName,
+      tippedUserHandle,
     }
 
     if (createdAccountForTippedUser)
@@ -347,20 +346,20 @@ export class MastodonService implements OnModuleInit {
     if (!amount) throw new Error('Toot is badly formatted')
 
     const isCustodial = !parts.includes('non-custodial')
-    const shouldSplitAmount = !parts.includes('split')
-    const replyToFediverseAccountId = toot.in_reply_to_account_id
+    const shouldSplitAmount = parts.includes('split')
+    const replyToAccountId = toot.in_reply_to_account_id
     const userIdsToTip = toot.mentions.map(({ id }) => id)
     const shouldIgnoreReply =
       (toot.mentions.length > 1 &&
         toot.mentions[0].id === toot.in_reply_to_account_id) ||
-      !replyToFediverseAccountId
+      !replyToAccountId
 
     return {
       amount: +amount,
       isCustodial,
       userIdsToTip,
       shouldSplitAmount,
-      replyToFediverseAccountId,
+      replyToAccountId,
       shouldIgnoreReply,
     }
   }
