@@ -14,3 +14,11 @@ model Account {
     nanoAddress        String @unique
     nanoIndex          Int    @unique
 }
+
+model PendingSignatures {
+    fediverseStatusId String @id
+    account           String
+    previous          String
+    balance           String
+    link              String
+}

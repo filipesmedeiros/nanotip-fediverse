@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config'
 import Big from 'big.js'
 import {
   Unit,
+  checkSignature,
   convert,
   deriveAddress,
   derivePublicKey,
@@ -35,6 +36,10 @@ export class NanoService {
     private accountsService: AccountsService
   ) {}
 
+  validateSignature(signature: string) {
+    return checkSignature(signature)
+  }
+
   nanoToRaw(nano: number) {
     const amountInRaw = convert(nano.toString(), {
       from: Unit.Nano,
@@ -63,18 +68,12 @@ export class NanoService {
     return { address, privateKey }
   }
 
-  async getNanoAccountInfo({
-    account,
-    getUnconfirmedInfo,
-  }: {
-    account: string
-    getUnconfirmedInfo?: boolean
-  }) {
+  async getNanoAccountInfo(account: string) {
     const accountRes =
       await this.httpService.axiosRef.post<AccountInfoResponse>('/', {
         action: 'account_info',
         account,
-        ...(getUnconfirmedInfo ? {} : { include_confirmed: 'true' }),
+        include_confirmed: 'true',
       })
 
     if (accountRes.status >= 300) throw new Error(accountRes.statusText)
@@ -83,8 +82,8 @@ export class NanoService {
     if ('error' in data) return undefined
 
     return {
-      balance: getUnconfirmedInfo ? data.balance : data.confirmed_balance,
-      frontier: getUnconfirmedInfo ? data.frontier : data.confirmed_frontier,
+      balance: data.confirmed_balance,
+      frontier: data.confirmed_frontier,
     }
   }
 
@@ -114,30 +113,25 @@ export class NanoService {
     to,
     amount,
     privateKey,
-    useUnconfirmedInfo,
+    cachedInfo,
   }: {
     from: string
     to: string
     amount: string
     privateKey: string
-    useUnconfirmedInfo?: boolean
+    cachedInfo?: {
+      frontier: string
+      balance: string
+    }
   }) {
     await this.receiveAllReceivables(from)
 
-    Big.PE = 50
-
-    const { frontier, balance } = await this.getNanoAccountInfo({
-      account: from,
-      getUnconfirmedInfo: useUnconfirmedInfo,
-    })
-
-    this.logger.log(`Balance: ${balance}`)
+    const { frontier, balance } =
+      cachedInfo ?? (await this.getNanoAccountInfo(from))
 
     const work = await this.getWorkForHash(frontier)
 
     const newBalance = Big(balance).minus(amount).toString()
-
-    this.logger.log(`Balance: ${newBalance}`)
 
     const hashData = {
       account: from,
@@ -167,14 +161,14 @@ export class NanoService {
 
     if ('error' in processRes.data) throw new Error(processRes.data.error)
 
-    return processRes.data.hash
+    return { hash: processRes.data.hash, newBalance }
   }
 
   private async receiveAllReceivables(account: string) {
     const receivables = await this.getNanoAccountReceivables(account)
 
     const results = await Promise.all([
-      this.getNanoAccountInfo({ account }),
+      this.getNanoAccountInfo(account),
       this.accountsService.getAccount(account),
     ])
 
@@ -216,10 +210,8 @@ export class NanoService {
       frontier: string
     }
   }) {
-    Big.PE = 50
-
     const { frontier, balance } =
-      cachedInfo ?? (await this.getNanoAccountInfo({ account: to }))
+      cachedInfo ?? (await this.getNanoAccountInfo(to))
 
     const workFor =
       frontier === NanoService.zeroString

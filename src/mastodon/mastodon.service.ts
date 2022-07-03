@@ -156,7 +156,7 @@ export class MastodonService implements OnModuleInit {
     this.logger.log(`Saw a toot with id ${toot.id}`)
 
     let amount: number,
-      isCustodial: boolean,
+      isNonCustodial: boolean,
       shouldSplitAmount: boolean,
       userIdsToTip: string[],
       replyToAccountId: string,
@@ -165,20 +165,18 @@ export class MastodonService implements OnModuleInit {
     try {
       ;({
         amount,
-        isCustodial,
+        isNonCustodial,
         shouldSplitAmount,
         userIdsToTip,
         replyToAccountId,
         shouldIgnoreReply,
-      } = this.parseToot(toot))
+      } = this.parseTipToot(toot))
     } catch {
       this.tootTootIsBadlyFormatted(toot.id)
       return
     }
 
     const amountInRaw = this.nanoService.nanoToRaw(amount)
-
-    if (!isCustodial) return // TODO
 
     let tipperAccount = await this.accountsService.getAccount(toot.account.id)
 
@@ -194,9 +192,9 @@ export class MastodonService implements OnModuleInit {
 
     let balance: string
     try {
-      ;({ balance } = await this.nanoService.getNanoAccountInfo({
-        account: tipperAccount.nanoAddress,
-      }))
+      ;({ balance } = await this.nanoService.getNanoAccountInfo(
+        tipperAccount.nanoAddress
+      ))
     } catch {
       const receivables = await this.nanoService.getNanoAccountReceivables(
         tipperAccount.nanoAddress
@@ -210,7 +208,6 @@ export class MastodonService implements OnModuleInit {
           nanoAccount: tipperAccount.nanoAddress,
         })
       else {
-        Big.PE = 50
         balance = Object.entries(receivables)
           .reduce((acc, nextReceivable) => {
             return Big(acc).plus(nextReceivable[1].amount)
@@ -229,16 +226,17 @@ export class MastodonService implements OnModuleInit {
     if (shouldIgnoreReply) {
       const tippedUsersCount = userIdsToTip.length
 
-      this.logger.log({ amountInRaw })
-
       const tipAmountToEachTippedUserInRaw = shouldSplitAmount
         ? Big(amountInRaw).div(tippedUsersCount).round().toString()
         : amountInRaw
 
-      this.logger.log({ tipAmountToEachTippedUserInRaw })
+      let cachedNanoInfo: {
+        previousTipHash: string
+        balanceAfterPreviousTip: string
+      } = undefined
 
-      for (const userId of userIdsToTip)
-        await this.tipUser({
+      for (const userId of userIdsToTip) {
+        const tipResult = await this.tipUser({
           tippedUserAccountId: userId,
           amountInRaw: tipAmountToEachTippedUserInRaw,
           amountInNano: this.nanoService.rawToNano(
@@ -246,8 +244,15 @@ export class MastodonService implements OnModuleInit {
           ),
           replyToTootId: toot.id,
           tipperNanoIndex: tipperAccount.nanoIndex,
-          fastSends: true,
+          cachedNanoInfo,
+          isNonCustodial,
         })
+
+        cachedNanoInfo = {
+          previousTipHash: tipResult.hash,
+          balanceAfterPreviousTip: tipResult.newBalance,
+        }
+      }
     } else
       await this.tipUser({
         tippedUserAccountId: replyToAccountId,
@@ -255,6 +260,7 @@ export class MastodonService implements OnModuleInit {
         amountInNano: amount,
         replyToTootId: toot.id,
         tipperNanoIndex: tipperAccount.nanoIndex,
+        isNonCustodial,
       })
   }
 
@@ -264,14 +270,19 @@ export class MastodonService implements OnModuleInit {
     tippedUserAccountId,
     tipperNanoIndex,
     replyToTootId,
-    fastSends,
+    cachedNanoInfo,
+    isNonCustodial,
   }: {
     amountInRaw: string
     amountInNano: number
     tippedUserAccountId: string
     tipperNanoIndex: number
     replyToTootId: string
-    fastSends?: boolean
+    cachedNanoInfo?: {
+      previousTipHash: string
+      balanceAfterPreviousTip: string
+    }
+    isNonCustodial?: boolean
   }) {
     const info = await this.getNanoAddressAndHandleFromAccountId(
       tippedUserAccountId
@@ -299,16 +310,21 @@ export class MastodonService implements OnModuleInit {
     const { privateKey: tipperNanoPrivateKey, address: tipperNanoAddress } =
       this.nanoService.getAddressAndPkFromIndex(tipperNanoIndex)
 
-    const hash = await this.nanoService.sendNano({
+    const nanoInfoAfterSend = await this.nanoService.sendNano({
       amount: amountInRaw,
       from: tipperNanoAddress,
       to: tippedUserNanoAddress,
       privateKey: tipperNanoPrivateKey,
-      useUnconfirmedInfo: fastSends,
+      cachedInfo: cachedNanoInfo
+        ? {
+            frontier: cachedNanoInfo.previousTipHash,
+            balance: cachedNanoInfo.balanceAfterPreviousTip,
+          }
+        : undefined,
     })
 
     const tootParams = {
-      blockHash: hash,
+      blockHash: nanoInfoAfterSend.hash,
       amount: amountInNano,
       replyToTootId,
       tippedUserHandle,
@@ -320,6 +336,8 @@ export class MastodonService implements OnModuleInit {
         newNanoAccount: tippedUserNanoAddress,
       })
     else this.tootTipped(tootParams)
+
+    return nanoInfoAfterSend
   }
 
   private async toot(status: string, inReplyTo?: string) {
@@ -333,7 +351,38 @@ export class MastodonService implements OnModuleInit {
     return tootRes.data
   }
 
-  private parseToot(toot: Toot) {
+  private parseTipToot(toot: Toot) {
+    const content = new JSDOM(toot.content)
+    const firstLine = content.window.document.querySelector('p')
+    const textContent = firstLine?.textContent
+
+    if (!textContent) throw new Error('Toot is badly formatted')
+
+    const parts = textContent.split(' ')
+    const amount = parts.find(part => !isNaN(+part) && +part !== 0)
+
+    if (!amount) throw new Error('Toot is badly formatted')
+
+    const isNonCustodial = parts.includes('non-custodial')
+    const shouldSplitAmount = parts.includes('split')
+    const replyToAccountId = toot.in_reply_to_account_id
+    const userIdsToTip = toot.mentions.map(({ id }) => id)
+    const shouldIgnoreReply =
+      (toot.mentions.length > 1 &&
+        toot.mentions[0].id === toot.in_reply_to_account_id) ||
+      !replyToAccountId
+
+    return {
+      amount: +amount,
+      isNonCustodial,
+      userIdsToTip,
+      shouldSplitAmount,
+      replyToAccountId,
+      shouldIgnoreReply,
+    }
+  }
+
+  private parseSignatureToot(toot: Toot) {
     const content = new JSDOM(toot.content)
     const firstLine = content.window.document.querySelector('p')
     const textContent = firstLine?.textContent
