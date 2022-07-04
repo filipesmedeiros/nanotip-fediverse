@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config'
 import Big from 'big.js'
 import { JSDOM } from 'jsdom'
+import { hashBlock } from 'nanocurrency'
 import { MessageEvent, WebSocket } from 'ws'
 
 import { AccountsService } from '@app/accounts/accounts.service'
@@ -97,6 +98,31 @@ export class MastodonService implements OnModuleInit {
     ) // TODO
   }
 
+  private tootBlockInfo({
+    tipperHandle,
+    tippedUserNanoAddress,
+    replyToTootId,
+    tipperNanoAddress,
+    newBalance,
+    representative,
+    blockHash,
+  }: {
+    tipperHandle: string
+    tippedUserNanoAddress: string
+    replyToTootId: string
+    tipperNanoAddress: string
+    newBalance: string
+    representative: string
+    blockHash: string
+  }) {
+    this.toot(
+      `Non-custodial send for ${tipperHandle}\n\nPlease sign the following hash: ${blockHash}\n\nBlock info: ${JSON.stringify(
+        { representative, newBalance, tipperNanoAddress, tippedUserNanoAddress }
+      )}`,
+      replyToTootId
+    ) // TODO
+  }
+
   private tootNanoAccountNotOpened({
     tipperHandle,
     tipperAccountId,
@@ -115,6 +141,24 @@ export class MastodonService implements OnModuleInit {
       `${tipperHandle}, you haven't sent any nano to your account ${nanoAccount} (https://nanolooker.com/account/${nanoAccount}) 🧐\n\nPlease send some nano to it and try again ⚡️`,
       replyToTootId
     ) // TODO
+  }
+
+  private tootNoNanoAccountInProfile({
+    tipperHandle,
+    tipperAccountId,
+    replyToTootId,
+  }: {
+    tipperHandle: string
+    tipperAccountId: string
+    replyToTootId: string
+  }) {
+    this.logger.warn(
+      `${tipperAccountId} is trying to tip non-custodial and doesn't have an address in their account`
+    )
+    this.toot(
+      `${tipperHandle}, to tip non-custodially, you must have a nano account in your profile 🤯`,
+      replyToTootId
+    ) // TODO link to docs
   }
 
   private tootCreatedNewAccountForTipper({
@@ -138,8 +182,26 @@ export class MastodonService implements OnModuleInit {
   }
 
   private tootTootIsBadlyFormatted(replyToTootId: string) {
-    this.logger.warn(`That toot is badly formatted`)
+    this.logger.warn(`Toot ${replyToTootId} is badly formatted`)
     this.toot(`That toot is badly formatted 😫`, replyToTootId) // TODO point to docs
+  }
+
+  private tootNonCustodialMustBeSingleTip({
+    tipperHandle,
+    tipperAccountId,
+    replyToTootId,
+  }: {
+    tipperHandle: string
+    tipperAccountId: string
+    replyToTootId: string
+  }) {
+    this.logger.warn(
+      `User ${tipperAccountId} tried to non-custodially tip multiple users`
+    )
+    this.toot(
+      `${tipperHandle}, tipping multiple people non-custodially is not supported`,
+      replyToTootId
+    ) // TODO point to docs
   }
 
   private async getNanoAddressAndHandleFromAccountId(accountId: string) {
@@ -175,6 +237,13 @@ export class MastodonService implements OnModuleInit {
       this.tootTootIsBadlyFormatted(toot.id)
       return
     }
+
+    if (isNonCustodial && userIdsToTip.length > 1)
+      this.tootNonCustodialMustBeSingleTip({
+        tipperHandle: `@${toot.account.acct}`,
+        tipperAccountId: toot.account.id,
+        replyToTootId: toot.id,
+      })
 
     const amountInRaw = this.nanoService.nanoToRaw(amount)
 
@@ -244,6 +313,7 @@ export class MastodonService implements OnModuleInit {
           ),
           replyToTootId: toot.id,
           tipperNanoIndex: tipperAccount.nanoIndex,
+          tipperAccountId: tipperAccount.fediverseAccountId,
           cachedNanoInfo,
           isNonCustodial,
         })
@@ -260,6 +330,7 @@ export class MastodonService implements OnModuleInit {
         amountInNano: amount,
         replyToTootId: toot.id,
         tipperNanoIndex: tipperAccount.nanoIndex,
+        tipperAccountId: tipperAccount.fediverseAccountId,
         isNonCustodial,
       })
   }
@@ -269,6 +340,7 @@ export class MastodonService implements OnModuleInit {
     amountInNano,
     tippedUserAccountId,
     tipperNanoIndex,
+    tipperAccountId,
     replyToTootId,
     cachedNanoInfo,
     isNonCustodial,
@@ -277,6 +349,7 @@ export class MastodonService implements OnModuleInit {
     amountInNano: number
     tippedUserAccountId: string
     tipperNanoIndex: number
+    tipperAccountId: string
     replyToTootId: string
     cachedNanoInfo?: {
       previousTipHash: string
@@ -305,6 +378,41 @@ export class MastodonService implements OnModuleInit {
       }
 
       tippedUserNanoAddress = tippedUserAccount.nanoAddress
+    }
+
+    if (isNonCustodial) {
+      const { nanoAddress: tipperNanoAddress, handle: tipperHandle } =
+        await this.getNanoAddressAndHandleFromAccountId(tipperAccountId)
+
+      if (!tipperNanoAddress)
+        this.tootNoNanoAccountInProfile({
+          tipperHandle,
+          replyToTootId,
+          tipperAccountId,
+        })
+      else {
+        const { representative, frontier, balance } =
+          await this.nanoService.getNanoAccountInfo(tipperNanoAddress)
+
+        Big.PE = 50
+        const newBalance = Big(balance).minus(amountInRaw).toString()
+
+        this.tootBlockInfo({
+          tippedUserNanoAddress,
+          tipperHandle,
+          replyToTootId,
+          blockHash: hashBlock({
+            representative,
+            balance: newBalance,
+            account: tipperNanoAddress,
+            link: tippedUserNanoAddress,
+            previous: frontier,
+          }),
+          tipperNanoAddress,
+          newBalance,
+          representative,
+        })
+      }
     }
 
     const { privateKey: tipperNanoPrivateKey, address: tipperNanoAddress } =

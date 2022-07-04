@@ -84,6 +84,7 @@ export class NanoService {
     return {
       balance: data.confirmed_balance,
       frontier: data.confirmed_frontier,
+      representative: data.confirmed_representative,
     }
   }
 
