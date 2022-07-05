@@ -9,7 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config'
 import Big from 'big.js'
 import { JSDOM } from 'jsdom'
-import { checkAddress, deriveSecretKey, hashBlock } from 'nanocurrency'
+import { checkAddress, hashBlock } from 'nanocurrency'
 import { MessageEvent, WebSocket } from 'ws'
 
 import { AccountsService } from '@app/accounts/accounts.service'
