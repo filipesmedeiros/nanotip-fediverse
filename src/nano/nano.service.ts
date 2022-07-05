@@ -68,13 +68,22 @@ export class NanoService {
     return { address, privateKey }
   }
 
-  async getNanoAccountInfo(account: string) {
+  async getNanoAccountInfo(
+    account: string,
+    {
+      balanceIncludeReceivable = false,
+    }: { balanceIncludeReceivable: boolean } = {
+      balanceIncludeReceivable: false,
+    }
+  ) {
     const accountRes =
       await this.httpService.axiosRef.post<AccountInfoResponse>('/', {
         action: 'account_info',
         account,
         representative: 'true',
         include_confirmed: 'true',
+        receivable: 'true',
+        pending: 'true',
       })
 
     if (accountRes.status >= 300) throw new Error(accountRes.statusText)
@@ -83,7 +92,11 @@ export class NanoService {
     if ('error' in data) return undefined
 
     return {
-      balance: data.confirmed_balance,
+      balance: !balanceIncludeReceivable
+        ? data.confirmed_balance
+        : Big(data.confirmed_balance)
+            .plus(data.confirmed_receivable ?? data.confirmed_pending)
+            .toString(),
       frontier: data.confirmed_frontier,
       representative: data.confirmed_representative,
     }
@@ -261,11 +274,7 @@ export class NanoService {
         : frontier
     const work = await this.getWorkForHash(workFor)
 
-    this.logger.log(`Balance: ${balance}`)
-
     const newBalance = Big(balance).plus(amount).toString()
-
-    this.logger.log(`Balance: ${newBalance}`)
 
     const hashData = {
       account: to,

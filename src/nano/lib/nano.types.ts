@@ -2,6 +2,8 @@ export type AccountInfoResponse =
   | {
       frontier: string
       open_block: string
+      confirmed_receivable?: string
+      confirmed_pending: string
       representative_block: string
       balance: string
       confirmed_balance: string

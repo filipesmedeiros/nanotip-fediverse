@@ -5,7 +5,7 @@ export interface Toot {
   in_reply_to_account_id: string | null
   sensitive: boolean
   spoiler_text: string
-  visibility: 'public'
+  visibility: 'public' | 'direct'
   language: string
   uri: string
   url: string

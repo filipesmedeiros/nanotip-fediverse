@@ -9,7 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config'
 import Big from 'big.js'
 import { JSDOM } from 'jsdom'
-import { hashBlock } from 'nanocurrency'
+import { checkAddress, deriveSecretKey, hashBlock } from 'nanocurrency'
 import { MessageEvent, WebSocket } from 'ws'
 
 import { AccountsService } from '@app/accounts/accounts.service'
@@ -33,12 +33,6 @@ export class MastodonService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    this.httpService.axiosRef.interceptors.response.use(res => {
-      this.logger.debug(res.data)
-      this.logger.debug(res.status)
-      return res
-    })
-
     this.nanoTipperAccount = await this.getMyAccount()
 
     this.connectWebsocket()
@@ -77,6 +71,24 @@ export class MastodonService implements OnModuleInit {
     this.toot(
       `Tipped ${tippedUserHandle} Ӿ${amount}! ⚡️\n\nhttps://nanolooker.com/block/${blockHash}`,
       replyToTootId
+    )
+  }
+
+  private privateTootTipped({
+    userHandle,
+    replyToTootId,
+    blockHash,
+    amount,
+  }: {
+    userHandle: string
+    replyToTootId: string
+    blockHash: string
+    amount: number
+  }) {
+    this.toot(
+      `${userHandle}, withdrew Ӿ${amount}! 🤑\n\nhttps://nanolooker.com/block/${blockHash}`,
+      replyToTootId,
+      { direct: true }
     )
   }
 
@@ -365,42 +377,73 @@ export class MastodonService implements OnModuleInit {
       })
   }
 
+  private async onDirectToot(toot: Toot) {
+    this.logger.log(`Received direct to toot ${toot.id}`)
+
+    const { amount, address } = this.parseWithdrawToot(toot)
+
+    const { nanoIndex } = await this.accountsService.getAccount(toot.account.id)
+
+    const { address: accountAddress, privateKey } =
+      this.nanoService.getAddressAndPkFromIndex(nanoIndex)
+
+    const amountToWithdraw = amount
+      ? this.nanoService.nanoToRaw(amount)
+      : (
+          await this.nanoService.getNanoAccountInfo(accountAddress, {
+            balanceIncludeReceivable: true,
+          })
+        ).balance
+
+    const { hash } = await this.nanoService.sendNano({
+      from: accountAddress,
+      to: address,
+      amount: amountToWithdraw,
+      privateKey,
+    })
+
+    this.privateTootTipped({
+      blockHash: hash,
+      replyToTootId: toot.id,
+      amount: this.nanoService.rawToNano(amountToWithdraw),
+      userHandle: `@${toot.account.acct}`,
+    })
+  }
+
   private async onReply(toot: Toot) {
     this.logger.log(
       `Someone replied to toot ${toot.in_reply_to_id} with id ${toot.id}`
     )
 
-    try {
-      const { signature } = this.parseSignatureToot(toot)
+    const { signature } = this.parseSignatureToot(toot)
 
-      const blockInfoToot = await this.getToot(toot.in_reply_to_id)
+    const blockInfoToot = await this.getToot(toot.in_reply_to_id)
 
-      const {
-        from: tipperNanoAddress,
-        to: tippedUserNanoAddress,
-        rep: representative,
-        balance: newBalance,
-        preivous: previousHash,
-        tippedUser: tippedUserHandle,
-        amount,
-      } = this.parseBlockInfoToot(blockInfoToot)
+    const {
+      from: tipperNanoAddress,
+      to: tippedUserNanoAddress,
+      rep: representative,
+      balance: newBalance,
+      preivous: previousHash,
+      tippedUser: tippedUserHandle,
+      amount,
+    } = this.parseBlockInfoToot(blockInfoToot)
 
-      const hash = await this.nanoService.sendSignedNano({
-        from: tipperNanoAddress,
-        to: tippedUserNanoAddress,
-        representative,
-        balance: newBalance,
-        previous: previousHash,
-        signature,
-      })
+    const hash = await this.nanoService.sendSignedNano({
+      from: tipperNanoAddress,
+      to: tippedUserNanoAddress,
+      representative,
+      balance: newBalance,
+      previous: previousHash,
+      signature,
+    })
 
-      this.tootTipped({
-        blockHash: hash,
-        tippedUserHandle,
-        amount,
-        replyToTootId: toot.id,
-      })
-    } catch {}
+    this.tootTipped({
+      blockHash: hash,
+      tippedUserHandle,
+      amount,
+      replyToTootId: toot.id,
+    })
   }
 
   private async tipUser({
@@ -460,7 +503,9 @@ export class MastodonService implements OnModuleInit {
         })
       else {
         const { representative, frontier, balance } =
-          await this.nanoService.getNanoAccountInfo(tipperNanoAddress)
+          await this.nanoService.getNanoAccountInfo(tipperNanoAddress, {
+            balanceIncludeReceivable: true,
+          })
 
         const newBalance = Big(balance).minus(amountInRaw).toString()
 
@@ -523,10 +568,15 @@ export class MastodonService implements OnModuleInit {
     this.httpService.axiosRef.post(`/accounts/${accountId}/follow`)
   }
 
-  private async toot(status: string, inReplyTo?: string) {
+  private async toot(
+    status: string,
+    inReplyTo?: string,
+    { direct = false }: { direct: boolean } = { direct: false }
+  ) {
     const tootRes = await this.httpService.axiosRef.post<Toot>('/statuses', {
       status,
       in_reply_to_id: inReplyTo,
+      visibility: direct ? 'direct' : 'public',
     })
     if (tootRes.status >= 300) throw new Error(tootRes.statusText)
 
@@ -578,6 +628,23 @@ export class MastodonService implements OnModuleInit {
     return { signature }
   }
 
+  private parseWithdrawToot(toot: Toot) {
+    const content = new JSDOM(toot.content).window.document.querySelector('p')
+    const textContent = content?.textContent
+
+    if (!textContent) throw new Error('Toot is badly formatted')
+
+    const parts = textContent.split(' ')
+
+    const amount = parts.find(part => !isNaN(+part) && +part !== 0)
+    const address = parts.find(part => checkAddress(part))
+
+    if (!parts.includes('withdraw') || !address)
+      throw new Error('Toot is badly formatted')
+
+    return { amount: +amount, address }
+  }
+
   private parseBlockInfoToot(toot: Toot) {
     const content = new JSDOM(toot.content).window.document.querySelector(
       'body'
@@ -627,15 +694,21 @@ export class MastodonService implements OnModuleInit {
 
         if (event.event !== 'update') return
 
-        if (event.stream.includes('hashtag'))
-          this.onToot(JSON.parse(event.payload))
+        const toot: Toot = JSON.parse(event.payload)
+
+        if (event.stream.includes('hashtag')) this.onToot(toot)
         else if (event.stream.includes('user')) {
-          const toot: Toot = JSON.parse(event.payload)
           if (
             toot.account.id !== this.nanoTipperAccount.id &&
             toot.in_reply_to_account_id === this.nanoTipperAccount.id
           )
             this.onReply(toot)
+          else if (
+            toot.visibility === 'direct' &&
+            toot.account.id !== this.nanoTipperAccount.id
+          ) {
+            this.onDirectToot(toot)
+          }
         }
       }
 
