@@ -754,41 +754,42 @@ export class MastodonService implements OnModuleInit {
     }
     this.ws.onopen = async () => {
       this.logger.log('Websocket connection opened')
-      const messageHandler = async (ev: MessageEvent) => {
-        try {
-          if (typeof ev.data !== 'string') return
-
-          const event: FediverseEvent = JSON.parse(ev.data)
-
-          if (event.event !== 'update') return
-
-          const toot: Toot = JSON.parse(event.payload)
-
-          if (event.stream.includes('hashtag')) this.onToot(toot)
-          else if (event.stream.includes('user')) {
-            if (
-              toot.account.id !== this.nanoTipperAccount.id &&
-              toot.in_reply_to_account_id === this.nanoTipperAccount.id
-            )
-              this.onReply(toot)
-            else if (
-              toot.visibility === 'direct' &&
-              toot.account.id !== this.nanoTipperAccount.id
-            ) {
-              this.onDirectToot(toot)
-            }
-          }
-        } catch (e) {
-          // any errors I forgot to catch fall in here :)
-          this.logger.error(e)
-        }
-      }
-
-      this.ws.addEventListener('message', messageHandler)
 
       this.listenToNotifications()
       this.listenToToots()
     }
+
+    const messageHandler = async (ev: MessageEvent) => {
+      try {
+        if (typeof ev.data !== 'string') return
+
+        const event: FediverseEvent = JSON.parse(ev.data)
+
+        if (event.event !== 'update') return
+
+        const toot: Toot = JSON.parse(event.payload)
+
+        if (event.stream.includes('hashtag')) this.onToot(toot)
+        else if (event.stream.includes('user')) {
+          if (
+            toot.account.id !== this.nanoTipperAccount.id &&
+            toot.in_reply_to_account_id === this.nanoTipperAccount.id
+          )
+            this.onReply(toot)
+          else if (
+            toot.visibility === 'direct' &&
+            toot.account.id !== this.nanoTipperAccount.id
+          ) {
+            this.onDirectToot(toot)
+          }
+        }
+      } catch (e) {
+        // any errors I forgot to catch fall in here :)
+        this.logger.error(e)
+      }
+    }
+
+    this.ws.addEventListener('message', messageHandler)
   }
 
   private async listenToNotifications() {
