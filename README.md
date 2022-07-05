@@ -42,6 +42,8 @@ So
 
 will tip @filipe Ӿ1 and @john Ӿ1.
 
+**Note:** Multi tip doesn't support non-custodial tips (yet? 👀)
+
 ### Split multi tip
 
 Add "split" to the toot to split the amount by everyone.
@@ -58,7 +60,7 @@ If the bots sees that the recepient has one of "Ӿ", "XNO" or "nano" (all case i
 
 ### Non-custodial tips
 
-If you wanna use the bot to tip someone without having an account with the tipper, use "non-custodial". The tipper will create a block and give you a hash to sign. The you just have to reply with the signature and the bot will tip the person for you. This way the bot never touched the money. Yay for non-custodial stuff 🥳
+If you wanna use the bot to tip someone without having an account with the tipper, use "non-custodial". The tipper will create a block and give you a hash to sign, for the address found in your account. Then, you just have to reply with the signature and the bot will tip the person for you. This way the bot never touched the money. Yay for non-custodial stuff 🥳
 
 It will look something like this:
 
@@ -73,6 +75,26 @@ The tip bot:
 You:
 
 > "@nanotipper 1234567...ABCD"
+
+**Note:** This will only work if you specify a nano address in your account, using a field "Ӿ", "XNO" or "nano" (all case insensitive).
+
+### Your address
+
+DM the bot "address" and it will reply with your address (a link to [Nanolooker](https://nanolooker.com))
+
+### Withdraw nano
+
+DM the bot "withdraw" and a nano address and it will send nano there. You can specify an amount.
+
+So (in a direct toot)
+
+> "@nanotipper withdraw 1 nano\_..."
+
+will withdraw 1 nano to that adress.
+
+You can leave the amount empty to withdraw all of the nano.
+
+You can leave the account empty to send the nano to the address specified in your account using a field "Ӿ", "XNO" or "nano" (all case insensitive)
 
 ## Deployment
 

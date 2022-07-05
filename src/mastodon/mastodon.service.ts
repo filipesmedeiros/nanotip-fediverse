@@ -110,7 +110,7 @@ export class MastodonService implements OnModuleInit {
     address: string
   }) {
     this.toot(
-      `${userHandle}, your tipper address is ${address}`,
+      `${userHandle}, your tipper address is https://nanolooker.com/account/${address}`,
       replyToTootId,
       { direct: true }
     )
@@ -440,9 +440,16 @@ export class MastodonService implements OnModuleInit {
             })
           ).balance
 
+      const { nanoAddress } = await this.getNanoAddressAndHandleFromAccountId(
+        toot.account.id
+      )
+
+      if (!address && !nanoAddress)
+        throw new Error('Trying to withdraw without specifying address')
+
       const { hash } = await this.nanoService.sendNano({
         from: accountAddress,
-        to: address,
+        to: nanoAddress ?? address,
         amount: amountToWithdraw,
         privateKey,
       })
@@ -699,7 +706,6 @@ export class MastodonService implements OnModuleInit {
     const address = parts.find(part => checkAddress(part))
 
     if (parts.includes('withdraw')) {
-      if (!address) throw new Error('Toot is badly formatted')
       return { type: 'withdraw', amount: +amount, address }
     } else if (parts.includes('address')) {
       return { type: 'address' }
@@ -749,27 +755,32 @@ export class MastodonService implements OnModuleInit {
     }
     this.ws.onopen = async () => {
       const messageHandler = async (ev: MessageEvent) => {
-        if (typeof ev.data !== 'string') return
+        try {
+          if (typeof ev.data !== 'string') return
 
-        const event: FediverseEvent = JSON.parse(ev.data)
+          const event: FediverseEvent = JSON.parse(ev.data)
 
-        if (event.event !== 'update') return
+          if (event.event !== 'update') return
 
-        const toot: Toot = JSON.parse(event.payload)
+          const toot: Toot = JSON.parse(event.payload)
 
-        if (event.stream.includes('hashtag')) this.onToot(toot)
-        else if (event.stream.includes('user')) {
-          if (
-            toot.account.id !== this.nanoTipperAccount.id &&
-            toot.in_reply_to_account_id === this.nanoTipperAccount.id
-          )
-            this.onReply(toot)
-          else if (
-            toot.visibility === 'direct' &&
-            toot.account.id !== this.nanoTipperAccount.id
-          ) {
-            this.onDirectToot(toot)
+          if (event.stream.includes('hashtag')) this.onToot(toot)
+          else if (event.stream.includes('user')) {
+            if (
+              toot.account.id !== this.nanoTipperAccount.id &&
+              toot.in_reply_to_account_id === this.nanoTipperAccount.id
+            )
+              this.onReply(toot)
+            else if (
+              toot.visibility === 'direct' &&
+              toot.account.id !== this.nanoTipperAccount.id
+            ) {
+              this.onDirectToot(toot)
+            }
           }
+        } catch (e) {
+          // any errors I forgot to catch fall in here :)
+          this.logger.error(e)
         }
       }
 
