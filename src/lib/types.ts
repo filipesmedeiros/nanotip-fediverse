@@ -9,4 +9,6 @@ export interface Config {
   MASTODON_TRIGGER_HASHTAG: string
 
   DATABASE_URL: string
+
+  SILENT: boolean
 }
