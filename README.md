@@ -12,4 +12,4 @@ Put them as env vars in your deployment :)
 - `MASTODON_REST_BASE_URL` -> The Mastodon REST API URL
 - `MASTODON_TRIGGER_HASHTAG` -> The hashtag you want to watch and to trigger tips
 - `DATABASE_URL` -> The MySQL connection string (currently I use [PlanetScale](https://planetscale.com/))
-- `SILENT` -> `"true"` if you want the bot to only toot the strictly necessary
+- `SILENT` -> `"true"` if you want the bot to only toot the strictly necessary (defaults to `"false"`)
