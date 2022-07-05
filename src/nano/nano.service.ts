@@ -165,6 +165,46 @@ export class NanoService {
     return { hash: processRes.data.hash, newBalance }
   }
 
+  async sendSignedNano({
+    from,
+    to,
+    representative,
+    signature,
+    balance,
+    previous,
+  }: {
+    from: string
+    to: string
+    balance: string
+    signature: string
+    representative: string
+    previous: string
+  }) {
+    const work = await this.getWorkForHash(previous)
+
+    const processRes = await this.httpService.axiosRef.post<
+      { hash: string } | { error: string }
+    >('/', {
+      action: 'process',
+      json_block: 'true',
+      subtype: 'send',
+      block: {
+        type: 'state',
+        account: from,
+        previous,
+        representative,
+        balance,
+        link: to,
+        signature,
+        work,
+      },
+    })
+
+    if ('error' in processRes.data) throw new Error(processRes.data.error)
+
+    return processRes.data.hash
+  }
+
   private async receiveAllReceivables(account: string) {
     const receivables = await this.getNanoAccountReceivables(account)
 

@@ -20,7 +20,6 @@ import { NanoService } from '@app/nano/nano.service'
 @Injectable()
 export class MastodonService implements OnModuleInit {
   private ws: WebSocket
-  private mastodonStreamingBaseUrlWithToken: string
   private readonly logger = new Logger(MastodonService.name)
 
   constructor(
@@ -30,18 +29,22 @@ export class MastodonService implements OnModuleInit {
     private nanoService: NanoService,
     @Inject(forwardRef(() => AccountsService))
     private accountsService: AccountsService
-  ) {
-    this.mastodonStreamingBaseUrlWithToken = `${this.configService.get(
-      'MASTODON_STREAMING_BASE_URL'
-    )}?access_token=${this.configService.get('MASTODON_ACCESS_TOKEN')}`
-  }
+  ) {}
 
-  onModuleInit() {
-    this.listenToToots(toot => {
+  async onModuleInit() {
+    await this.connectWebsocket()
+
+    this.listenToNotifications(async toot => {
       try {
-        this.onToot(toot)
+        await this.onReply(toot)
       } catch {} // TODO
-    }, this.configService.get('MASTODON_TRIGGER_HASHTAG'))
+    })
+
+    this.listenToToots(async toot => {
+      try {
+        await this.onToot(toot)
+      } catch {} // TODO
+    })
   }
 
   private tootCreatedAccountAndTipped({
@@ -99,25 +102,36 @@ export class MastodonService implements OnModuleInit {
   }
 
   private tootBlockInfo({
-    tipperHandle,
     tippedUserNanoAddress,
     replyToTootId,
     tipperNanoAddress,
     newBalance,
     representative,
+    amount,
+    tippedUserHandle,
     blockHash,
+    previousHash,
   }: {
-    tipperHandle: string
     tippedUserNanoAddress: string
     replyToTootId: string
     tipperNanoAddress: string
     newBalance: string
     representative: string
     blockHash: string
+    tippedUserHandle: string
+    amount: number
+    previousHash: string
   }) {
     this.toot(
-      `Non-custodial send for ${tipperHandle}\n\nPlease sign the following hash: ${blockHash}\n\nBlock info: ${JSON.stringify(
-        { representative, newBalance, tipperNanoAddress, tippedUserNanoAddress }
+      `Please sign the following hash: ${blockHash}\n\nBlock info: ${JSON.stringify(
+        {
+          representative,
+          newBalance,
+          amount,
+          tipperNanoAddress,
+          tippedUserNanoAddress,
+          previousHash,
+        }
       )}`,
       replyToTootId
     ) // TODO
@@ -212,6 +226,20 @@ export class MastodonService implements OnModuleInit {
     })?.value
 
     return { nanoAddress, handle: `@${tippedUserAccount.acct}` }
+  }
+
+  private async getMyAccount() {
+    const { data } = await this.httpService.axiosRef.get<Account>(
+      '/accounts/verify_credentials'
+    )
+    return data
+  }
+
+  private async getToot(tootId: string) {
+    const { data } = await this.httpService.axiosRef.get<Toot>(
+      `/statuses/${tootId}`
+    )
+    return data
   }
 
   private async onToot(toot: Toot) {
@@ -335,6 +363,44 @@ export class MastodonService implements OnModuleInit {
       })
   }
 
+  private async onReply(toot: Toot) {
+    this.logger.log(
+      `Someone repied to toot ${toot.in_reply_to_id} with id ${toot.id}`
+    )
+
+    try {
+      const { signature } = this.parseSignatureToot(toot)
+
+      const blockInfoToot = await this.getToot(toot.in_reply_to_id)
+
+      const {
+        tipperNanoAddress,
+        tippedUserNanoAddress,
+        representative,
+        newBalance,
+        previousHash,
+        tippedUserHandle,
+        amount,
+      } = this.parseBlockInfoToot(blockInfoToot)
+
+      const hash = await this.nanoService.sendSignedNano({
+        from: tipperNanoAddress,
+        to: tippedUserNanoAddress,
+        representative,
+        balance: newBalance,
+        previous: previousHash,
+        signature,
+      })
+
+      this.tootTipped({
+        blockHash: hash,
+        tippedUserHandle,
+        amount,
+        replyToTootId: toot.id,
+      })
+    } catch {}
+  }
+
   private async tipUser({
     amountInRaw,
     amountInNano,
@@ -397,9 +463,10 @@ export class MastodonService implements OnModuleInit {
         Big.PE = 50
         const newBalance = Big(balance).minus(amountInRaw).toString()
 
+        this.followAccount(tipperAccountId)
+
         this.tootBlockInfo({
           tippedUserNanoAddress,
-          tipperHandle,
           replyToTootId,
           blockHash: hashBlock({
             representative,
@@ -411,6 +478,9 @@ export class MastodonService implements OnModuleInit {
           tipperNanoAddress,
           newBalance,
           representative,
+          previousHash: frontier,
+          amount: amountInNano,
+          tippedUserHandle,
         })
       }
     }
@@ -446,6 +516,14 @@ export class MastodonService implements OnModuleInit {
     else this.tootTipped(tootParams)
 
     return nanoInfoAfterSend
+  }
+
+  private async followAccount(accountId: string) {
+    await this.httpService.axiosRef.post(`/accounts/${accountId}/follow`)
+  }
+
+  private async unfollowAccount(accountId: string) {
+    await this.httpService.axiosRef.post(`/accounts/${accountId}/unfollow`)
   }
 
   private async toot(status: string, inReplyTo?: string) {
@@ -491,36 +569,40 @@ export class MastodonService implements OnModuleInit {
   }
 
   private parseSignatureToot(toot: Toot) {
-    const content = new JSDOM(toot.content)
-    const firstLine = content.window.document.querySelector('p')
-    const textContent = firstLine?.textContent
+    const content = new JSDOM(toot.content).window.document.querySelector('p')
+    const textContent = content?.textContent
 
     if (!textContent) throw new Error('Toot is badly formatted')
 
-    const parts = textContent.split(' ')
-    const amount = parts.find(part => !isNaN(+part) && +part !== 0)
+    if (!this.nanoService.validateSignature(textContent))
+      throw new Error('Toot is badly formatted')
 
-    if (!amount) throw new Error('Toot is badly formatted')
-
-    const isCustodial = !parts.includes('non-custodial')
-    const shouldSplitAmount = parts.includes('split')
-    const replyToAccountId = toot.in_reply_to_account_id
-    const userIdsToTip = toot.mentions.map(({ id }) => id)
-    const shouldIgnoreReply =
-      (toot.mentions.length > 1 &&
-        toot.mentions[0].id === toot.in_reply_to_account_id) ||
-      !replyToAccountId
-
-    return {
-      amount: +amount,
-      isCustodial,
-      userIdsToTip,
-      shouldSplitAmount,
-      replyToAccountId,
-      shouldIgnoreReply,
-    }
+    return { signature: textContent }
   }
 
+  private parseBlockInfoToot(toot: Toot) {
+    const content = new JSDOM(toot.content).window.document.querySelector(
+      'body'
+    )
+    const textContent = content?.textContent
+
+    if (!textContent) throw new Error('Toot is badly formatted')
+
+    this.logger.log({ textContent })
+
+    const blockInfo: {
+      representative: string
+      newBalance: string
+      tipperNanoAddress: string
+      tippedUserNanoAddress: string
+      blockHash: string
+      previousHash: string
+      tippedUserHandle: string
+      amount: number
+    } = JSON.parse(textContent.split('Block info: ')[1])
+
+    return blockInfo
+  }
   private async getMastodonAccount(id: string) {
     const accountRes = await this.httpService.axiosRef.get<Account>(
       `/accounts/${id}`
@@ -531,10 +613,24 @@ export class MastodonService implements OnModuleInit {
     return accountRes.data
   }
 
-  private listenToToots(onToot: (toot: Toot) => void, tag?: string) {
-    const wsUrl = tag
-      ? `${this.mastodonStreamingBaseUrlWithToken}&stream=hashtag:local&tag=${tag}`
-      : `${this.mastodonStreamingBaseUrlWithToken}&stream=public`
+  private connectWebsocket() {
+    const wsUrl = `${this.configService.get(
+      'MASTODON_STREAMING_BASE_URL'
+    )}?access_token=${this.configService.get('MASTODON_ACCESS_TOKEN')}`
+
+    return new Promise(res => {
+      this.ws = new WebSocket(wsUrl)
+      this.ws.onclose = () => {
+        this.connectWebsocket()
+      }
+      this.ws.onopen = () => {
+        res(undefined)
+      }
+    })
+  }
+
+  private async listenToNotifications(onReply: (reply: Toot) => void) {
+    const account = await this.getMyAccount()
 
     const messageHandler = (ev: MessageEvent) => {
       if (typeof ev.data !== 'string') return
@@ -542,14 +638,39 @@ export class MastodonService implements OnModuleInit {
       const data = JSON.parse(ev.data as string)
       if (data.event !== 'update') return
 
-      const toot = JSON.parse(data.payload)
+      const toot: Toot = JSON.parse(data.payload)
+
+      if (toot.in_reply_to_account_id !== account.id) return
+
+      onReply(toot)
+    }
+
+    this.ws.addEventListener('message', messageHandler)
+
+    this.ws.send({
+      type: 'subscribe',
+      stream: 'user',
+    })
+  }
+
+  private listenToToots(onToot: (toot: Toot) => void) {
+    const messageHandler = (ev: MessageEvent) => {
+      if (typeof ev.data !== 'string') return
+
+      const data = JSON.parse(ev.data as string)
+      if (data.event !== 'update') return
+
+      const toot: Toot = JSON.parse(data.payload)
 
       onToot(toot)
     }
 
-    this.ws = new WebSocket(wsUrl)
+    this.ws.addEventListener('message', messageHandler)
 
-    this.ws.onclose = () => (this.ws = new WebSocket(wsUrl))
-    this.ws.onopen = () => this.ws.addEventListener('message', messageHandler)
+    this.ws.send({
+      type: 'subscribe',
+      stream: 'hashtag',
+      tag: this.configService.get('MASTODON_TRIGGER_HASHTAG'),
+    })
   }
 }
