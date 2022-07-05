@@ -221,10 +221,15 @@ export class MastodonService implements OnModuleInit {
 
   private async getNanoAddressAndHandleFromAccountId(accountId: string) {
     const tippedUserAccount = await this.getMastodonAccount(accountId)
-    const nanoAddress = tippedUserAccount.fields.find(({ name }) => {
+    let nanoAddress = tippedUserAccount.fields.find(({ name }) => {
       const nameLower = name.toLocaleUpperCase()
       return nameLower === 'XNO' || nameLower === 'NANO' || nameLower === 'Ӿ'
     })?.value
+
+    if (nanoAddress.startsWith('nano://'))
+      nanoAddress = nanoAddress.substring(7)
+    else if (nanoAddress.startsWith('nano:'))
+      nanoAddress = nanoAddress.substring(5)
 
     return { nanoAddress, handle: `@${tippedUserAccount.acct}` }
   }
@@ -650,10 +655,12 @@ export class MastodonService implements OnModuleInit {
 
     this.ws.addEventListener('message', messageHandler)
 
-    this.ws.send({
-      type: 'subscribe',
-      stream: 'user',
-    })
+    this.ws.send(
+      JSON.stringify({
+        type: 'subscribe',
+        stream: 'user',
+      })
+    )
   }
 
   private listenToToots(onToot: (toot: Toot) => void) {
@@ -670,10 +677,12 @@ export class MastodonService implements OnModuleInit {
 
     this.ws.addEventListener('message', messageHandler)
 
-    this.ws.send({
-      type: 'subscribe',
-      stream: 'hashtag',
-      tag: this.configService.get('MASTODON_TRIGGER_HASHTAG'),
-    })
+    this.ws.send(
+      JSON.stringify({
+        type: 'subscribe',
+        stream: 'hashtag',
+        tag: this.configService.get('MASTODON_TRIGGER_HASHTAG'),
+      })
+    )
   }
 }
