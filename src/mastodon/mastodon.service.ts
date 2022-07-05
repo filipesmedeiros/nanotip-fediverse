@@ -730,8 +730,6 @@ export class MastodonService implements OnModuleInit {
       preivous: string
     } = JSON.parse(textContent.split('Tip info: ')[1])
 
-    this.logger.debug(blockInfo)
-
     return blockInfo
   }
   private async getMastodonAccount(id: string) {
