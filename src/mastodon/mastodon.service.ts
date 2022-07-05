@@ -123,11 +123,12 @@ export class MastodonService implements OnModuleInit {
     previousHash: string
   }) {
     this.toot(
-      `Please sign the following hash: ${blockHash}\n\nBlock info: ${JSON.stringify(
+      `Please sign the following hash: ${blockHash}\n\nTip/block info: ${JSON.stringify(
         {
           representative,
           newBalance,
           amount,
+          tippedUserHandle,
           tipperNanoAddress,
           tippedUserNanoAddress,
           previousHash,
@@ -398,6 +399,8 @@ export class MastodonService implements OnModuleInit {
         amount,
         replyToTootId: toot.id,
       })
+
+      this.unfollowAccount(toot.account.id)
     } catch {}
   }
 
@@ -518,12 +521,12 @@ export class MastodonService implements OnModuleInit {
     return nanoInfoAfterSend
   }
 
-  private async followAccount(accountId: string) {
-    await this.httpService.axiosRef.post(`/accounts/${accountId}/follow`)
+  private followAccount(accountId: string) {
+    this.httpService.axiosRef.post(`/accounts/${accountId}/follow`)
   }
 
-  private async unfollowAccount(accountId: string) {
-    await this.httpService.axiosRef.post(`/accounts/${accountId}/unfollow`)
+  private unfollowAccount(accountId: string) {
+    this.httpService.axiosRef.post(`/accounts/${accountId}/unfollow`)
   }
 
   private async toot(status: string, inReplyTo?: string) {
@@ -599,7 +602,7 @@ export class MastodonService implements OnModuleInit {
       previousHash: string
       tippedUserHandle: string
       amount: number
-    } = JSON.parse(textContent.split('Block info: ')[1])
+    } = JSON.parse(textContent.split('Tip/block info: ')[1])
 
     return blockInfo
   }
