@@ -73,6 +73,7 @@ export class NanoService {
       await this.httpService.axiosRef.post<AccountInfoResponse>('/', {
         action: 'account_info',
         account,
+        representative: 'true',
         include_confirmed: 'true',
       })
 

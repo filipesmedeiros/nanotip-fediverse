@@ -14,13 +14,14 @@ import { MessageEvent, WebSocket } from 'ws'
 
 import { AccountsService } from '@app/accounts/accounts.service'
 import { Config } from '@app/lib/types'
-import { Account, Toot } from '@app/mastodon/lib/mastodon.types'
+import { Account, FediverseEvent, Toot } from '@app/mastodon/lib/mastodon.types'
 import { NanoService } from '@app/nano/nano.service'
 
 @Injectable()
 export class MastodonService implements OnModuleInit {
   private ws: WebSocket
   private readonly logger = new Logger(MastodonService.name)
+  private nanoTipperAccount: Account
 
   constructor(
     private httpService: HttpService,
@@ -32,19 +33,15 @@ export class MastodonService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    await this.connectWebsocket()
-
-    this.listenToNotifications(async toot => {
-      try {
-        await this.onReply(toot)
-      } catch {} // TODO
+    this.httpService.axiosRef.interceptors.response.use(res => {
+      this.logger.debug(res.data)
+      this.logger.debug(res.status)
+      return res
     })
 
-    this.listenToToots(async toot => {
-      try {
-        await this.onToot(toot)
-      } catch {} // TODO
-    })
+    this.nanoTipperAccount = await this.getMyAccount()
+
+    this.connectWebsocket()
   }
 
   private tootCreatedAccountAndTipped({
@@ -123,17 +120,15 @@ export class MastodonService implements OnModuleInit {
     previousHash: string
   }) {
     this.toot(
-      `Please sign the following hash: ${blockHash}\n\nTip/block info: ${JSON.stringify(
-        {
-          representative,
-          newBalance,
-          amount,
-          tippedUserHandle,
-          tipperNanoAddress,
-          tippedUserNanoAddress,
-          previousHash,
-        }
-      )}`,
+      `Please sign this hash: ${blockHash}\n\nTip info: ${JSON.stringify({
+        rep: representative,
+        balance: newBalance,
+        amount,
+        tippedUser: tippedUserHandle,
+        from: tipperNanoAddress,
+        to: tippedUserNanoAddress,
+        preivous: previousHash,
+      })}`,
       replyToTootId
     ) // TODO
   }
@@ -220,18 +215,18 @@ export class MastodonService implements OnModuleInit {
   }
 
   private async getNanoAddressAndHandleFromAccountId(accountId: string) {
-    const tippedUserAccount = await this.getMastodonAccount(accountId)
-    let nanoAddress = tippedUserAccount.fields.find(({ name }) => {
-      const nameLower = name.toLocaleUpperCase()
-      return nameLower === 'XNO' || nameLower === 'NANO' || nameLower === 'Ӿ'
+    const account = await this.getMastodonAccount(accountId)
+    let nanoAddress = account.fields.find(({ name }) => {
+      const nameUpper = name.toLocaleUpperCase()
+      return nameUpper === 'XNO' || nameUpper === 'NANO' || nameUpper === 'Ӿ'
     })?.value
 
-    if (nanoAddress.startsWith('nano://'))
+    if (nanoAddress?.startsWith('nano://'))
       nanoAddress = nanoAddress.substring(7)
-    else if (nanoAddress.startsWith('nano:'))
+    else if (nanoAddress?.startsWith('nano:'))
       nanoAddress = nanoAddress.substring(5)
 
-    return { nanoAddress, handle: `@${tippedUserAccount.acct}` }
+    return { nanoAddress, handle: `@${account.acct}` }
   }
 
   private async getMyAccount() {
@@ -352,10 +347,11 @@ export class MastodonService implements OnModuleInit {
           isNonCustodial,
         })
 
-        cachedNanoInfo = {
-          previousTipHash: tipResult.hash,
-          balanceAfterPreviousTip: tipResult.newBalance,
-        }
+        if (!isNonCustodial)
+          cachedNanoInfo = {
+            previousTipHash: tipResult.hash,
+            balanceAfterPreviousTip: tipResult.newBalance,
+          }
       }
     } else
       await this.tipUser({
@@ -371,7 +367,7 @@ export class MastodonService implements OnModuleInit {
 
   private async onReply(toot: Toot) {
     this.logger.log(
-      `Someone repied to toot ${toot.in_reply_to_id} with id ${toot.id}`
+      `Someone replied to toot ${toot.in_reply_to_id} with id ${toot.id}`
     )
 
     try {
@@ -380,12 +376,12 @@ export class MastodonService implements OnModuleInit {
       const blockInfoToot = await this.getToot(toot.in_reply_to_id)
 
       const {
-        tipperNanoAddress,
-        tippedUserNanoAddress,
-        representative,
-        newBalance,
-        previousHash,
-        tippedUserHandle,
+        from: tipperNanoAddress,
+        to: tippedUserNanoAddress,
+        rep: representative,
+        balance: newBalance,
+        preivous: previousHash,
+        tippedUser: tippedUserHandle,
         amount,
       } = this.parseBlockInfoToot(blockInfoToot)
 
@@ -404,8 +400,6 @@ export class MastodonService implements OnModuleInit {
         amount,
         replyToTootId: toot.id,
       })
-
-      this.unfollowAccount(toot.account.id)
     } catch {}
   }
 
@@ -468,7 +462,6 @@ export class MastodonService implements OnModuleInit {
         const { representative, frontier, balance } =
           await this.nanoService.getNanoAccountInfo(tipperNanoAddress)
 
-        Big.PE = 50
         const newBalance = Big(balance).minus(amountInRaw).toString()
 
         this.followAccount(tipperAccountId)
@@ -491,47 +484,43 @@ export class MastodonService implements OnModuleInit {
           tippedUserHandle,
         })
       }
-    }
+    } else {
+      const { privateKey: tipperNanoPrivateKey, address: tipperNanoAddress } =
+        this.nanoService.getAddressAndPkFromIndex(tipperNanoIndex)
 
-    const { privateKey: tipperNanoPrivateKey, address: tipperNanoAddress } =
-      this.nanoService.getAddressAndPkFromIndex(tipperNanoIndex)
-
-    const nanoInfoAfterSend = await this.nanoService.sendNano({
-      amount: amountInRaw,
-      from: tipperNanoAddress,
-      to: tippedUserNanoAddress,
-      privateKey: tipperNanoPrivateKey,
-      cachedInfo: cachedNanoInfo
-        ? {
-            frontier: cachedNanoInfo.previousTipHash,
-            balance: cachedNanoInfo.balanceAfterPreviousTip,
-          }
-        : undefined,
-    })
-
-    const tootParams = {
-      blockHash: nanoInfoAfterSend.hash,
-      amount: amountInNano,
-      replyToTootId,
-      tippedUserHandle,
-    }
-
-    if (createdAccountForTippedUser)
-      this.tootCreatedAccountAndTipped({
-        ...tootParams,
-        newNanoAccount: tippedUserNanoAddress,
+      const nanoInfoAfterSend = await this.nanoService.sendNano({
+        amount: amountInRaw,
+        from: tipperNanoAddress,
+        to: tippedUserNanoAddress,
+        privateKey: tipperNanoPrivateKey,
+        cachedInfo: cachedNanoInfo
+          ? {
+              frontier: cachedNanoInfo.previousTipHash,
+              balance: cachedNanoInfo.balanceAfterPreviousTip,
+            }
+          : undefined,
       })
-    else this.tootTipped(tootParams)
 
-    return nanoInfoAfterSend
+      const tootParams = {
+        blockHash: nanoInfoAfterSend.hash,
+        amount: amountInNano,
+        replyToTootId,
+        tippedUserHandle,
+      }
+
+      if (createdAccountForTippedUser)
+        this.tootCreatedAccountAndTipped({
+          ...tootParams,
+          newNanoAccount: tippedUserNanoAddress,
+        })
+      else this.tootTipped(tootParams)
+
+      return nanoInfoAfterSend
+    }
   }
 
   private followAccount(accountId: string) {
     this.httpService.axiosRef.post(`/accounts/${accountId}/follow`)
-  }
-
-  private unfollowAccount(accountId: string) {
-    this.httpService.axiosRef.post(`/accounts/${accountId}/unfollow`)
   }
 
   private async toot(status: string, inReplyTo?: string) {
@@ -539,7 +528,6 @@ export class MastodonService implements OnModuleInit {
       status,
       in_reply_to_id: inReplyTo,
     })
-
     if (tootRes.status >= 300) throw new Error(tootRes.statusText)
 
     return tootRes.data
@@ -582,10 +570,12 @@ export class MastodonService implements OnModuleInit {
 
     if (!textContent) throw new Error('Toot is badly formatted')
 
-    if (!this.nanoService.validateSignature(textContent))
+    const signature = textContent.split(' ').at(-1)
+
+    if (!this.nanoService.validateSignature(signature))
       throw new Error('Toot is badly formatted')
 
-    return { signature: textContent }
+    return { signature }
   }
 
   private parseBlockInfoToot(toot: Toot) {
@@ -596,18 +586,17 @@ export class MastodonService implements OnModuleInit {
 
     if (!textContent) throw new Error('Toot is badly formatted')
 
-    this.logger.log({ textContent })
-
     const blockInfo: {
-      representative: string
-      newBalance: string
-      tipperNanoAddress: string
-      tippedUserNanoAddress: string
-      blockHash: string
-      previousHash: string
-      tippedUserHandle: string
+      rep: string
+      balance: string
       amount: number
-    } = JSON.parse(textContent.split('Tip/block info: ')[1])
+      tippedUser: string
+      from: string
+      to: string
+      preivous: string
+    } = JSON.parse(textContent.split('Tip info: ')[1])
+
+    this.logger.debug(blockInfo)
 
     return blockInfo
   }
@@ -626,34 +615,39 @@ export class MastodonService implements OnModuleInit {
       'MASTODON_STREAMING_BASE_URL'
     )}?access_token=${this.configService.get('MASTODON_ACCESS_TOKEN')}`
 
-    return new Promise(res => {
-      this.ws = new WebSocket(wsUrl)
-      this.ws.onclose = () => {
-        this.connectWebsocket()
+    this.ws = new WebSocket(wsUrl)
+    this.ws.onclose = () => {
+      this.connectWebsocket()
+    }
+    this.ws.onopen = async () => {
+      const messageHandler = async (ev: MessageEvent) => {
+        if (typeof ev.data !== 'string') return
+
+        const event: FediverseEvent = JSON.parse(ev.data)
+
+        if (event.event !== 'update') return
+
+        if (event.stream.includes('hashtag'))
+          this.onToot(JSON.parse(event.payload))
+        else if (event.stream.includes('user')) {
+          const toot: Toot = JSON.parse(event.payload)
+          if (
+            toot.account.id !== this.nanoTipperAccount.id &&
+            toot.in_reply_to_account_id === this.nanoTipperAccount.id
+          )
+            this.onReply(toot)
+        }
       }
-      this.ws.onopen = () => {
-        res(undefined)
-      }
-    })
+
+      this.ws.addEventListener('message', messageHandler)
+
+      this.listenToNotifications()
+      this.listenToToots()
+    }
   }
 
-  private async listenToNotifications(onReply: (reply: Toot) => void) {
-    const account = await this.getMyAccount()
-
-    const messageHandler = (ev: MessageEvent) => {
-      if (typeof ev.data !== 'string') return
-
-      const data = JSON.parse(ev.data as string)
-      if (data.event !== 'update') return
-
-      const toot: Toot = JSON.parse(data.payload)
-
-      if (toot.in_reply_to_account_id !== account.id) return
-
-      onReply(toot)
-    }
-
-    this.ws.addEventListener('message', messageHandler)
+  private async listenToNotifications() {
+    this.logger.log('Listening to notifications')
 
     this.ws.send(
       JSON.stringify({
@@ -663,19 +657,8 @@ export class MastodonService implements OnModuleInit {
     )
   }
 
-  private listenToToots(onToot: (toot: Toot) => void) {
-    const messageHandler = (ev: MessageEvent) => {
-      if (typeof ev.data !== 'string') return
-
-      const data = JSON.parse(ev.data as string)
-      if (data.event !== 'update') return
-
-      const toot: Toot = JSON.parse(data.payload)
-
-      onToot(toot)
-    }
-
-    this.ws.addEventListener('message', messageHandler)
+  private listenToToots() {
+    this.logger.log('Listening to toots with hashtag')
 
     this.ws.send(
       JSON.stringify({

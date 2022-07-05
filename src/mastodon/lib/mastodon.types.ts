@@ -87,3 +87,9 @@ export interface Account {
     verified_at: string
   }[]
 }
+
+export interface FediverseEvent {
+  event: string
+  payload: string
+  stream: string[]
+}
