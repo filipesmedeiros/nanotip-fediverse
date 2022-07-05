@@ -751,9 +751,11 @@ export class MastodonService implements OnModuleInit {
 
     this.ws = new WebSocket(wsUrl)
     this.ws.onclose = () => {
+      this.logger.warn('Websocket connection closed')
       this.connectWebsocket()
     }
     this.ws.onopen = async () => {
+      this.logger.log('Websocket connection opened')
       const messageHandler = async (ev: MessageEvent) => {
         try {
           if (typeof ev.data !== 'string') return
