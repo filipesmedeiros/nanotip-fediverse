@@ -110,7 +110,7 @@ export class MastodonService implements OnModuleInit {
     address: string
   }) {
     this.toot(
-      `${userHandle}, your tipper address is https://nanolooker.com/account/${address}`,
+      `${userHandle}, your tip bot address is https://nanolooker.com/account/${address}`,
       replyToTootId,
       { direct: true }
     )
@@ -414,7 +414,7 @@ export class MastodonService implements OnModuleInit {
   }
 
   private async onDirectToot(toot: Toot) {
-    this.logger.log(`Received direct to toot ${toot.id}`)
+    this.logger.log(`Received direct toot ${toot.id}`)
 
     const parsed = this.parseDirectToot(toot)
 
