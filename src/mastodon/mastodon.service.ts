@@ -784,8 +784,6 @@ export class MastodonService implements OnModuleInit {
 
         const toot: Toot = JSON.parse(event.payload)
 
-        this.logger.debug(event)
-
         if (event.stream.includes('hashtag')) await this.onToot(toot)
         else if (event.stream.includes('user')) {
           if (
