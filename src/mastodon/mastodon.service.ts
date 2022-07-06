@@ -54,11 +54,11 @@ export class MastodonService implements OnModuleInit {
     amount: number
   }) {
     if (!this.isSilent)
-      this.toot(
+      return this.toot(
         `Created an account (https://nanolooker.com/account/${newNanoAccount}) for ${tippedUserHandle} and sent Ӿ${amount} to it! ⚡️ https://nanolooker.com/block/${blockHash}`,
         replyToTootId
       )
-    else this.favorite(replyToTootId)
+    else return this.favorite(replyToTootId)
   }
 
   private tootTipped({
@@ -73,11 +73,11 @@ export class MastodonService implements OnModuleInit {
     amount: number
   }) {
     if (!this.isSilent)
-      this.toot(
+      return this.toot(
         `Tipped ${tippedUserHandle} Ӿ${amount}! ⚡️\n\nhttps://nanolooker.com/block/${blockHash}`,
         replyToTootId
       )
-    else this.favorite(replyToTootId)
+    else return this.favorite(replyToTootId)
   }
 
   private privateTootWithdrew({
@@ -92,12 +92,12 @@ export class MastodonService implements OnModuleInit {
     amount: number
   }) {
     if (!this.isSilent)
-      this.toot(
+      return this.toot(
         `${userHandle}, withdrew Ӿ${amount}! 🤑\n\nhttps://nanolooker.com/block/${blockHash}`,
         replyToTootId,
         { direct: true }
       )
-    else this.favorite(replyToTootId)
+    else return this.favorite(replyToTootId)
   }
 
   private privateTootAddress({
@@ -109,7 +109,7 @@ export class MastodonService implements OnModuleInit {
     replyToTootId: string
     address: string
   }) {
-    this.toot(
+    return this.toot(
       `${userHandle}, your tip bot address is https://nanolooker.com/account/${address}`,
       replyToTootId,
       { direct: true }
@@ -129,11 +129,11 @@ export class MastodonService implements OnModuleInit {
       this.logger.warn(
         `Mastodon user ${tipperAccountId} doesn't have enough balance to tip requested amount`
       )
-      this.toot(
+      return this.toot(
         `${tipperHandle}, you don't have enough balance in your account 🥲`,
         replyToTootId
       ) // TODO
-    } else this.favorite(replyToTootId)
+    } else return this.favorite(replyToTootId)
   }
 
   private tootBlockInfo({
@@ -157,7 +157,7 @@ export class MastodonService implements OnModuleInit {
     amount: number
     previousHash: string
   }) {
-    this.toot(
+    return this.toot(
       `Please sign this hash: ${blockHash}\n\nTip info: ${JSON.stringify({
         rep: representative,
         balance: newBalance,
@@ -186,11 +186,11 @@ export class MastodonService implements OnModuleInit {
       this.logger.warn(
         `Mastodon user ${tipperAccountId} has not sent any fund to their account and are trying to tip`
       )
-      this.toot(
+      return this.toot(
         `${tipperHandle}, you haven't sent any nano to your account ${nanoAccount} (https://nanolooker.com/account/${nanoAccount}) 🧐\n\nPlease send some nano to it and try again ⚡️`,
         replyToTootId
       ) // TODO
-    } else this.favorite(replyToTootId)
+    } else return this.favorite(replyToTootId)
   }
 
   private tootNoNanoAccountInProfile({
@@ -206,11 +206,11 @@ export class MastodonService implements OnModuleInit {
       this.logger.warn(
         `${tipperAccountId} is trying to tip non-custodial and doesn't have an address in their account`
       )
-      this.toot(
+      return this.toot(
         `${tipperHandle}, to tip non-custodially, you must have a nano account in your profile 🤯`,
         replyToTootId
       ) // TODO link to docs
-    } else this.favorite(replyToTootId)
+    } else return this.favorite(replyToTootId)
   }
 
   private tootCreatedNewAccountForTipper({
@@ -228,18 +228,18 @@ export class MastodonService implements OnModuleInit {
       this.logger.warn(
         `Mastodon user ${tipperAccountId} had not created an account yet. Created account with nano address ${newNanoAccount}`
       )
-      this.toot(
+      return this.toot(
         `${tipperHandle}, you hadn't created an account yet 🥺\n\nI created a new account with address ${newNanoAccount} (https://nanolooker.com/account/${newNanoAccount}) 🥳\n\nPlease send some nano to it and try again ⚡️`,
         replyToTootId
       )
-    } else this.favorite(replyToTootId)
+    } else return this.favorite(replyToTootId)
   }
 
   private tootTootIsBadlyFormatted(replyToTootId: string) {
     if (!this.isSilent) {
       this.logger.warn(`Toot ${replyToTootId} is badly formatted`)
-      this.toot(`That toot is badly formatted 😫`, replyToTootId) // TODO point to docs
-    } else this.favorite(replyToTootId)
+      return this.toot(`That toot is badly formatted 😫`, replyToTootId) // TODO point to docs
+    } else return this.favorite(replyToTootId)
   }
 
   private tootNonCustodialMustBeSingleTip({
@@ -255,11 +255,11 @@ export class MastodonService implements OnModuleInit {
       this.logger.warn(
         `User ${tipperAccountId} tried to non-custodially tip multiple users`
       )
-      this.toot(
+      return this.toot(
         `${tipperHandle}, tipping multiple people non-custodially is not supported`,
         replyToTootId
       ) // TODO point to docs
-    } else this.favorite(replyToTootId)
+    } else return this.favorite(replyToTootId)
   }
 
   private async getNanoAddressAndHandleFromAccountId(accountId: string) {
@@ -311,12 +311,12 @@ export class MastodonService implements OnModuleInit {
         shouldIgnoreReply,
       } = this.parseTipToot(toot))
     } catch {
-      this.tootTootIsBadlyFormatted(toot.id)
+      await this.tootTootIsBadlyFormatted(toot.id)
       return
     }
 
     if (isNonCustodial && userIdsToTip.length > 1)
-      this.tootNonCustodialMustBeSingleTip({
+      await this.tootNonCustodialMustBeSingleTip({
         tipperHandle: `@${toot.account.acct}`,
         tipperAccountId: toot.account.id,
         replyToTootId: toot.id,
@@ -324,34 +324,48 @@ export class MastodonService implements OnModuleInit {
 
     const amountInRaw = this.nanoService.nanoToRaw(amount)
 
-    let tipperAccount = await this.accountsService.getAccount(toot.account.id)
+    let tipperNanoAddress: string
+    let tipperNanoIndex: number
 
-    if (!tipperAccount) {
-      tipperAccount = await this.accountsService.createAccount(toot.account.id)
-      this.tootCreatedNewAccountForTipper({
-        tipperHandle: `@${toot.account.acct}`,
-        tipperAccountId: toot.account.id,
-        newNanoAccount: tipperAccount.nanoAddress,
-        replyToTootId: toot.id,
-      })
+    if (!isNonCustodial) {
+      let tipperAccount = await this.accountsService.getAccount(toot.account.id)
+
+      if (!tipperAccount) {
+        tipperAccount = await this.accountsService.createAccount(
+          toot.account.id
+        )
+        await this.tootCreatedNewAccountForTipper({
+          tipperHandle: `@${toot.account.acct}`,
+          tipperAccountId: toot.account.id,
+          newNanoAccount: tipperAccount.nanoAddress,
+          replyToTootId: toot.id,
+        })
+      }
+
+      ;({ nanoAddress: tipperNanoAddress, nanoIndex: tipperNanoIndex } =
+        tipperAccount)
+    } else {
+      tipperNanoAddress = (
+        await this.getNanoAddressAndHandleFromAccountId(toot.account.id)
+      ).nanoAddress
     }
 
     let balance: string
     try {
       ;({ balance } = await this.nanoService.getNanoAccountInfo(
-        tipperAccount.nanoAddress
+        tipperNanoAddress
       ))
     } catch {
       const receivables = await this.nanoService.getNanoAccountReceivables(
-        tipperAccount.nanoAddress
+        tipperNanoAddress
       )
       const hasReceivables = Object.entries(receivables).length > 0
       if (!hasReceivables)
-        this.tootNanoAccountNotOpened({
+        await this.tootNanoAccountNotOpened({
           tipperHandle: `@${toot.account.acct}`,
           tipperAccountId: toot.account.id,
           replyToTootId: toot.id,
-          nanoAccount: tipperAccount.nanoAddress,
+          nanoAccount: tipperNanoAddress,
         })
       else {
         balance = Object.entries(receivables)
@@ -363,7 +377,7 @@ export class MastodonService implements OnModuleInit {
     }
 
     if (Big(amountInRaw).gt(balance))
-      this.tootNoBalance({
+      await this.tootNoBalance({
         tipperHandle: `@${toot.account.acct}`,
         replyToTootId: toot.id,
         tipperAccountId: toot.account.id,
@@ -389,8 +403,8 @@ export class MastodonService implements OnModuleInit {
             tipAmountToEachTippedUserInRaw
           ),
           replyToTootId: toot.id,
-          tipperNanoIndex: tipperAccount.nanoIndex,
-          tipperAccountId: tipperAccount.fediverseAccountId,
+          tipperNanoIndex: tipperNanoIndex,
+          tipperAccountId: toot.account.id,
           cachedNanoInfo,
           isNonCustodial,
         })
@@ -407,8 +421,8 @@ export class MastodonService implements OnModuleInit {
         amountInRaw,
         amountInNano: amount,
         replyToTootId: toot.id,
-        tipperNanoIndex: tipperAccount.nanoIndex,
-        tipperAccountId: tipperAccount.fediverseAccountId,
+        tipperNanoIndex: tipperNanoIndex,
+        tipperAccountId: toot.account.id,
         isNonCustodial,
       })
   }
@@ -424,7 +438,7 @@ export class MastodonService implements OnModuleInit {
       this.nanoService.getAddressAndPkFromIndex(nanoIndex)
 
     if (parsed.type === 'address') {
-      this.privateTootAddress({
+      await this.privateTootAddress({
         replyToTootId: toot.id,
         address: accountAddress,
         userHandle: `@${toot.account.acct}`,
@@ -454,7 +468,7 @@ export class MastodonService implements OnModuleInit {
         privateKey,
       })
 
-      this.privateTootWithdrew({
+      await this.privateTootWithdrew({
         blockHash: hash,
         replyToTootId: toot.id,
         amount: this.nanoService.rawToNano(amountToWithdraw),
@@ -491,7 +505,7 @@ export class MastodonService implements OnModuleInit {
       signature,
     })
 
-    this.tootTipped({
+    await this.tootTipped({
       blockHash: hash,
       tippedUserHandle,
       amount,
@@ -549,7 +563,7 @@ export class MastodonService implements OnModuleInit {
         await this.getNanoAddressAndHandleFromAccountId(tipperAccountId)
 
       if (!tipperNanoAddress)
-        this.tootNoNanoAccountInProfile({
+        await this.tootNoNanoAccountInProfile({
           tipperHandle,
           replyToTootId,
           tipperAccountId,
@@ -562,25 +576,26 @@ export class MastodonService implements OnModuleInit {
 
         const newBalance = Big(balance).minus(amountInRaw).toString()
 
-        this.followAccount(tipperAccountId)
-
-        this.tootBlockInfo({
-          tippedUserNanoAddress,
-          replyToTootId,
-          blockHash: hashBlock({
+        await Promise.all([
+          this.followAccount(tipperAccountId),
+          this.tootBlockInfo({
+            tippedUserNanoAddress,
+            replyToTootId,
+            blockHash: hashBlock({
+              representative,
+              balance: newBalance,
+              account: tipperNanoAddress,
+              link: tippedUserNanoAddress,
+              previous: frontier,
+            }),
+            tipperNanoAddress,
+            newBalance,
             representative,
-            balance: newBalance,
-            account: tipperNanoAddress,
-            link: tippedUserNanoAddress,
-            previous: frontier,
+            previousHash: frontier,
+            amount: amountInNano,
+            tippedUserHandle,
           }),
-          tipperNanoAddress,
-          newBalance,
-          representative,
-          previousHash: frontier,
-          amount: amountInNano,
-          tippedUserHandle,
-        })
+        ])
       }
     } else {
       const { privateKey: tipperNanoPrivateKey, address: tipperNanoAddress } =
@@ -607,18 +622,18 @@ export class MastodonService implements OnModuleInit {
       }
 
       if (createdAccountForTippedUser)
-        this.tootCreatedAccountAndTipped({
+        await this.tootCreatedAccountAndTipped({
           ...tootParams,
           newNanoAccount: tippedUserNanoAddress,
         })
-      else this.tootTipped(tootParams)
+      else await this.tootTipped(tootParams)
 
       return nanoInfoAfterSend
     }
   }
 
   private followAccount(accountId: string) {
-    this.httpService.axiosRef.post(`/accounts/${accountId}/follow`)
+    return this.httpService.axiosRef.post(`/accounts/${accountId}/follow`)
   }
 
   private async toot(
