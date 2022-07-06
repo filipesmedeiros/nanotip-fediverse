@@ -769,18 +769,20 @@ export class MastodonService implements OnModuleInit {
 
         const toot: Toot = JSON.parse(event.payload)
 
-        if (event.stream.includes('hashtag')) this.onToot(toot)
+        this.logger.debug(event)
+
+        if (event.stream.includes('hashtag')) await this.onToot(toot)
         else if (event.stream.includes('user')) {
           if (
             toot.account.id !== this.nanoTipperAccount.id &&
             toot.in_reply_to_account_id === this.nanoTipperAccount.id
           )
-            this.onReply(toot)
+            await this.onReply(toot)
           else if (
             toot.visibility === 'direct' &&
             toot.account.id !== this.nanoTipperAccount.id
           ) {
-            this.onDirectToot(toot)
+            await this.onDirectToot(toot)
           }
         }
       } catch (e) {
@@ -789,7 +791,7 @@ export class MastodonService implements OnModuleInit {
       }
     }
 
-    this.ws.addEventListener('message', messageHandler)
+    this.ws.onmessage = messageHandler
   }
 
   private async listenToNotifications() {
