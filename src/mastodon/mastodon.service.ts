@@ -762,20 +762,17 @@ export class MastodonService implements OnModuleInit {
       'MASTODON_STREAMING_BASE_URL'
     )}?access_token=${this.configService.get('MASTODON_ACCESS_TOKEN')}`
 
-    this.ws = new WebSocket(wsUrl)
-    this.ws.onclose = () => {
-      this.logger.warn('Websocket connection closed')
-      this.connectWebsocket()
-    }
-    this.ws.onopen = async () => {
-      this.logger.log('Websocket connection opened')
+    let ping: NodeJS.Timeout
 
-      this.listenToNotifications()
-      this.listenToToots()
+    const doPing = () => {
+      this.logger.log('Pinging')
+      this.ws.ping()
+      ping = setTimeout(() => this.ws.close(), 60e3 * 3)
     }
 
     const messageHandler = async (ev: MessageEvent) => {
       try {
+        this.logger.debug(ev.data)
         if (typeof ev.data !== 'string') return
 
         const event: FediverseEvent = JSON.parse(ev.data)
@@ -804,7 +801,29 @@ export class MastodonService implements OnModuleInit {
       }
     }
 
-    this.ws.onmessage = messageHandler
+    this.ws = new WebSocket(wsUrl)
+    this.ws.onclose = () => {
+      this.logger.warn('Websocket connection closed')
+
+      clearTimeout(ping)
+
+      this.connectWebsocket()
+    }
+    this.ws.onopen = async () => {
+      this.logger.log('Websocket connection opened')
+
+      doPing()
+      this.listenToNotifications()
+      this.listenToToots()
+
+      this.ws.on('pong', () => {
+        this.logger.log('Got pong')
+        clearTimeout(ping)
+        setTimeout(() => doPing(), 60e3 * 3)
+      })
+
+      this.ws.onmessage = messageHandler
+    }
   }
 
   private async listenToNotifications() {
